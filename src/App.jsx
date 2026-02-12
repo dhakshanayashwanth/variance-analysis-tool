@@ -5,6 +5,50 @@ import { useState, useRef, useCallback } from "react";
    Enterprise-grade spend variance analyzer
    ═══════════════════════════════════════════════════════════════ */
 
+// ─── Analysis Type Definitions ───
+const analysisTypes = {
+  accounting: {
+    label: "Accounting Variance",
+    description: "Compares actual spend against budgeted/standard costs using GAAP-aligned cost accounting methodology.",
+    formula: "Variance = Actual Cost − Budgeted (Standard) Cost",
+    interpretation: "A positive variance indicates over-budget (unfavorable); a negative variance indicates under-budget (favorable).",
+    thresholds: [
+      { range: "± 0–2%", label: "Immaterial", action: "No action required. Within normal operating tolerance." },
+      { range: "± 2–5%", label: "Notable", action: "Flag for review during month-end close. Include in management commentary." },
+      { range: "± 5–10%", label: "Significant", action: "Requires cost center owner explanation and corrective action plan." },
+      { range: "> ±10%", label: "Critical", action: "Escalate to Finance Director. Mandatory variance memo and reforecast." },
+    ],
+    priorLabel: "Budget / Standard",
+    currentLabel: "Actual",
+    methodology: [
+      "Line-item comparison of actual GL postings against approved budget at the cost center level.",
+      "Variances decomposed into Price Variance (rate differential) and Volume Variance (quantity differential) where applicable.",
+      "Accrual adjustments applied for timing differences (e.g., invoices received but not yet posted).",
+      "FX impact isolated for multi-currency cost centers using budget vs. actual exchange rates.",
+    ],
+  },
+  finance: {
+    label: "Financial Variance (MoM)",
+    description: "Month-over-month trend analysis comparing current period spend to prior period actuals for operational insight.",
+    formula: "Variance = Current Month Actual − Prior Month Actual",
+    interpretation: "Identifies spend trajectory and anomalies. Positive = spend increase; Negative = spend decrease.",
+    thresholds: [
+      { range: "± 0–3%", label: "Stable", action: "Normal fluctuation. No action required." },
+      { range: "± 3–7%", label: "Trending", action: "Monitor over next 2 periods. Note in operating review." },
+      { range: "± 7–15%", label: "Escalating", action: "Requires business owner narrative. Include in exec variance deck." },
+      { range: "> ±15%", label: "Anomalous", action: "Immediate investigation. May indicate one-time event or data error." },
+    ],
+    priorLabel: "Prior Month",
+    currentLabel: "Current Month",
+    methodology: [
+      "Compares consecutive monthly actuals to surface operational trends independent of budget assumptions.",
+      "Seasonal adjustment factors applied where historical patterns exist (e.g., Q4 media spend spikes).",
+      "Run-rate extrapolation used to project full-quarter and full-year impact of observed variances.",
+      "Correlation analysis between cost categories to identify linked spend movements (e.g., headcount ↔ facilities).",
+    ],
+  },
+};
+
 // ─── Mock Data Generator ───
 const generateMockData = (marketFilter) => {
   const categories = [
@@ -45,9 +89,6 @@ const generateMonthlyData = (marketFilter) => {
 };
 
 const generateDrivers = (marketFilter) => {
-  // Drivers must sum to category variances:
-  // Media Spend: 2,270,000 | Personnel: -750,000 | Technology: 1,350,000
-  // Professional Services: 1,450,000 | Facilities: -250,000 | Travel & Events: 600,000 | Other OpEx: 250,000
   const drivers = [
     { category: "Media Spend", costCenter: "US Performance Marketing", supplier: "Google Ads", variance: 1450000 },
     { category: "Media Spend", costCenter: "US Brand Marketing", supplier: "Meta Platforms", variance: 820000 },
@@ -76,13 +117,12 @@ const generateDrivers = (marketFilter) => {
 const generateCommentary = (numComments, commentaryType, marketFilter, categories) => {
   if (commentaryType === "none") return [];
 
-  // Sort categories by absolute variance descending to match table order
   const sorted = [...categories].sort((a, b) => Math.abs(b.variance) - Math.abs(a.variance));
 
   const commentaryMap = {
     "Media Spend": (v) => ({
       title: "Media Spend Over-Index",
-      body: `Total media spend increased ${fmtVar(v)} vs. July 2025, driven primarily by US Performance Marketing and US Brand Marketing. The increase is attributable to incremental paid search investment during Q2 hiring campaigns and expanded brand awareness initiatives. Recommend reviewing ROI thresholds for campaigns exceeding $500K monthly burn rate.`,
+      body: `Total media spend increased ${fmtVar(v)} vs. prior period, driven primarily by US Performance Marketing and US Brand Marketing. The increase is attributable to incremental paid search investment during Q2 hiring campaigns and expanded brand awareness initiatives. Recommend reviewing ROI thresholds for campaigns exceeding $500K monthly burn rate.`,
       severity: "high",
     }),
     "Professional Services": (v) => ({
@@ -102,7 +142,7 @@ const generateCommentary = (numComments, commentaryType, marketFilter, categorie
     }),
     "Travel & Events": (v) => ({
       title: "Travel & Events Normalization",
-      body: `T&E variance of ${fmtVar(v)} reflects return-to-office travel patterns and Sales Enablement regional meetings. Executive travel contributed a notable portion of the increase. While elevated vs. July 2025, spend remains 22% below FY23 pre-normalization levels. Suggest monitoring monthly run-rate against updated FY25 T&E budget.`,
+      body: `T&E variance of ${fmtVar(v)} reflects return-to-office travel patterns and Sales Enablement regional meetings. Executive travel contributed a notable portion of the increase. While elevated vs. prior period, spend remains 22% below FY23 pre-normalization levels. Suggest monitoring monthly run-rate against updated FY25 T&E budget.`,
       severity: "medium",
     }),
     "Facilities": (v) => ({
@@ -173,7 +213,62 @@ const t = {
   divider: "#1E293B",
   purple: "#8B5CF6",
   purpleDim: "rgba(139,92,246,0.12)",
+  cyan: "#06B6D4",
+  cyanDim: "rgba(6,182,212,0.10)",
+  cyanBorder: "rgba(6,182,212,0.25)",
 };
+
+// ─── Info Dropdown Component ───
+function InfoDropdown({ icon, title, color, borderColor, bgColor, children }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={{
+      background: t.card,
+      border: `1px solid ${open ? borderColor : t.cardBorder}`,
+      borderRadius: 10,
+      overflow: "hidden",
+      transition: "border-color 0.2s",
+    }}>
+      <button
+        onClick={() => setOpen(!open)}
+        style={{
+          width: "100%",
+          padding: "14px 20px",
+          background: open ? bgColor : "transparent",
+          border: "none",
+          cursor: "pointer",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          fontFamily: "inherit",
+          transition: "background 0.15s",
+        }}
+        onMouseEnter={(e) => { if (!open) e.currentTarget.style.background = "rgba(255,255,255,0.02)"; }}
+        onMouseLeave={(e) => { if (!open) e.currentTarget.style.background = "transparent"; }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          {icon}
+          <span style={{ fontSize: 13, fontWeight: 600, color: t.white }}>{title}</span>
+        </div>
+        <svg
+          width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round"
+          style={{ transition: "transform 0.25s ease", transform: open ? "rotate(180deg)" : "rotate(0deg)" }}
+        >
+          <polyline points="6 9 12 15 18 9" />
+        </svg>
+      </button>
+      {open && (
+        <div style={{
+          padding: "0 20px 18px 20px",
+          background: bgColor,
+          animation: "fadeIn 0.2s ease",
+        }}>
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
 
 // ─── Expandable Driver Components ───
 function DriverCostCenter({ costCenter, supplier, variance }) {
@@ -272,6 +367,8 @@ function DriverGroup({ category, drivers, groupTotal }) {
 
 // ─── Main Component ───
 export default function VarianceAnalysisTool() {
+  const [analysisType, setAnalysisType] = useState("finance");
+  const [typeDropdownOpen, setTypeDropdownOpen] = useState(false);
   const [file, setFile] = useState(null);
   const [dragging, setDragging] = useState(false);
   const [market, setMarket] = useState("all");
@@ -281,6 +378,9 @@ export default function VarianceAnalysisTool() {
   const [results, setResults] = useState(null);
   const [progress, setProgress] = useState(0);
   const fileRef = useRef(null);
+  const dropdownRef = useRef(null);
+
+  const currentType = analysisTypes[analysisType];
 
   const handleDrop = useCallback((e) => {
     e.preventDefault();
@@ -314,6 +414,7 @@ export default function VarianceAnalysisTool() {
           commentary: generateCommentary(numComments, commentary, marketFilter, cats),
           market: marketFilter,
           commentaryType: commentary,
+          analysisType: analysisType,
         });
         setAnalyzing(false);
       }
@@ -343,9 +444,14 @@ export default function VarianceAnalysisTool() {
   const varColor = (v) => v >= 0 ? t.red : t.green;
   const varBg = (v) => v >= 0 ? t.redDim : t.greenDim;
 
+  const resType = results ? analysisTypes[results.analysisType] : currentType;
+
   return (
     <div style={{ minHeight: "100vh", background: t.bg, color: t.text, fontFamily: "'DM Sans', 'SF Pro Display', -apple-system, system-ui, sans-serif" }}>
       <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+      <style>{`
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+      `}</style>
 
       {/* ═══ Header ═══ */}
       <div style={{ padding: "16px 32px", borderBottom: `1px solid ${t.divider}`, display: "flex", alignItems: "center", justifyContent: "space-between", background: "rgba(15,23,42,0.8)", backdropFilter: "blur(12px)" }}>
@@ -362,9 +468,108 @@ export default function VarianceAnalysisTool() {
 
       <div style={{ maxWidth: 1200, margin: "0 auto", padding: "28px 24px" }}>
 
+        {/* ═══ Analysis Type Selector ═══ */}
+        {!results && (
+          <div style={{ marginBottom: 20, position: "relative" }} ref={dropdownRef}>
+            <div style={sLabel}>Analysis Type</div>
+            <button
+              onClick={() => setTypeDropdownOpen(!typeDropdownOpen)}
+              style={{
+                width: "100%",
+                padding: "14px 20px",
+                borderRadius: 10,
+                border: `1px solid ${typeDropdownOpen ? t.accentBorder : t.cardBorder}`,
+                background: t.card,
+                color: t.white,
+                fontSize: 14,
+                fontWeight: 600,
+                cursor: "pointer",
+                fontFamily: "inherit",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                transition: "border-color 0.15s",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <div style={{
+                  width: 28, height: 28, borderRadius: 6,
+                  background: analysisType === "accounting" ? t.amberDim : t.accentDim,
+                  border: `1px solid ${analysisType === "accounting" ? t.amberBorder : t.accentBorder}`,
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                }}>
+                  {analysisType === "accounting" ? (
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={t.amber} strokeWidth="2" strokeLinecap="round"><path d="M4 2v20l2-1 2 1 2-1 2 1 2-1 2 1 2-1 2 1V2l-2 1-2-1-2 1-2-1-2 1-2-1-2 1-2-1z"/><path d="M8 10h8"/><path d="M8 14h4"/></svg>
+                  ) : (
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={t.accent} strokeWidth="2" strokeLinecap="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+                  )}
+                </div>
+                <div style={{ textAlign: "left" }}>
+                  <div>{currentType.label}</div>
+                  <div style={{ fontSize: 11, color: t.textDim, fontWeight: 400, marginTop: 2 }}>{currentType.description}</div>
+                </div>
+              </div>
+              <svg
+                width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={t.textDim} strokeWidth="2.5" strokeLinecap="round"
+                style={{ transition: "transform 0.2s", transform: typeDropdownOpen ? "rotate(180deg)" : "rotate(0deg)", flexShrink: 0 }}
+              >
+                <polyline points="6 9 12 15 18 9" />
+              </svg>
+            </button>
+
+            {typeDropdownOpen && (
+              <div style={{
+                position: "absolute", top: "100%", left: 0, right: 0, zIndex: 50,
+                marginTop: 6, borderRadius: 10, border: `1px solid ${t.accentBorder}`,
+                background: t.card, boxShadow: "0 12px 40px rgba(0,0,0,0.5)",
+                animation: "fadeIn 0.15s ease", overflow: "hidden",
+              }}>
+                {Object.entries(analysisTypes).map(([key, val]) => (
+                  <button
+                    key={key}
+                    onClick={() => { setAnalysisType(key); setTypeDropdownOpen(false); }}
+                    style={{
+                      width: "100%", padding: "14px 20px",
+                      background: analysisType === key ? "rgba(59,130,246,0.06)" : "transparent",
+                      border: "none", borderBottom: `1px solid ${t.divider}`,
+                      cursor: "pointer", fontFamily: "inherit",
+                      display: "flex", alignItems: "center", gap: 12,
+                      transition: "background 0.1s",
+                    }}
+                    onMouseEnter={(e) => e.currentTarget.style.background = "rgba(59,130,246,0.08)"}
+                    onMouseLeave={(e) => e.currentTarget.style.background = analysisType === key ? "rgba(59,130,246,0.06)" : "transparent"}
+                  >
+                    <div style={{
+                      width: 28, height: 28, borderRadius: 6,
+                      background: key === "accounting" ? t.amberDim : t.accentDim,
+                      border: `1px solid ${key === "accounting" ? t.amberBorder : t.accentBorder}`,
+                      display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+                    }}>
+                      {key === "accounting" ? (
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={t.amber} strokeWidth="2" strokeLinecap="round"><path d="M4 2v20l2-1 2 1 2-1 2 1 2-1 2 1 2-1 2 1V2l-2 1-2-1-2 1-2-1-2 1-2-1-2 1-2-1z"/><path d="M8 10h8"/><path d="M8 14h4"/></svg>
+                      ) : (
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={t.accent} strokeWidth="2" strokeLinecap="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+                      )}
+                    </div>
+                    <div style={{ textAlign: "left" }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: t.white }}>{val.label}</div>
+                      <div style={{ fontSize: 11, color: t.textDim, marginTop: 2 }}>{val.description}</div>
+                    </div>
+                    {analysisType === key && (
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={t.accent} strokeWidth="2.5" strokeLinecap="round" style={{ marginLeft: "auto", flexShrink: 0 }}>
+                        <path d="M20 6L9 17l-5-5"/>
+                      </svg>
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* ═══ Upload Section ═══ */}
         {!results && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
 
             {/* Drop Zone */}
             <div
@@ -391,7 +596,7 @@ export default function VarianceAnalysisTool() {
                   </div>
                   <div style={{ textAlign: "left" }}>
                     <div style={{ fontSize: 14, fontWeight: 600, color: t.white }}>{file.name}</div>
-                    <div style={{ fontSize: 11, color: t.textDim, marginTop: 2 }}>{(file.size / 1024).toFixed(1)} KB • Ready for analysis</div>
+                    <div style={{ fontSize: 11, color: t.textDim, marginTop: 2 }}>{(file.size / 1024).toFixed(1)} KB · Ready for analysis</div>
                   </div>
                   <button onClick={(e) => { e.stopPropagation(); setFile(null); }} style={{ marginLeft: 12, background: "transparent", border: "none", color: t.textDim, cursor: "pointer", fontSize: 18, fontFamily: "inherit" }}>×</button>
                 </div>
@@ -401,7 +606,7 @@ export default function VarianceAnalysisTool() {
                     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={t.accent} strokeWidth="2" strokeLinecap="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
                   </div>
                   <div style={{ fontSize: 14, fontWeight: 600, color: t.white, marginBottom: 4 }}>Drop your spend data file here</div>
-                  <div style={{ fontSize: 12, color: t.textDim }}>or click to browse • CSV or XLSX</div>
+                  <div style={{ fontSize: 12, color: t.textDim }}>or click to browse · CSV or XLSX</div>
                 </>
               )}
             </div>
@@ -456,6 +661,185 @@ export default function VarianceAnalysisTool() {
               </div>
             </div>
 
+            {/* ═══ Informational Dropdowns ═══ */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {/* Formula & Calculation */}
+              <InfoDropdown
+                title="How Variances Are Calculated"
+                color={t.accent}
+                borderColor={t.accentBorder}
+                bgColor={t.accentDim}
+                icon={<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={t.accent} strokeWidth="2" strokeLinecap="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>}
+              >
+                <div style={{ marginTop: 4 }}>
+                  <div style={{
+                    padding: "12px 16px", borderRadius: 8,
+                    background: "rgba(0,0,0,0.25)", border: `1px solid ${t.divider}`,
+                    fontFamily: "'JetBrains Mono', monospace", fontSize: 14, fontWeight: 500,
+                    color: t.accent, marginBottom: 14, letterSpacing: "0.02em",
+                  }}>
+                    {currentType.formula}
+                  </div>
+                  <p style={{ fontSize: 13, lineHeight: 1.65, color: t.text, margin: "0 0 14px 0" }}>
+                    {currentType.interpretation}
+                  </p>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: t.textDim, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10 }}>Methodology</div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    {currentType.methodology.map((step, i) => (
+                      <div key={i} style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+                        <div style={{
+                          width: 20, height: 20, borderRadius: 5, flexShrink: 0, marginTop: 1,
+                          background: "rgba(59,130,246,0.15)", border: `1px solid ${t.accentBorder}`,
+                          display: "flex", alignItems: "center", justifyContent: "center",
+                          fontSize: 10, fontWeight: 700, color: t.accent, fontFamily: "'JetBrains Mono', monospace",
+                        }}>{i + 1}</div>
+                        <span style={{ fontSize: 12, lineHeight: 1.6, color: t.text }}>{step}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </InfoDropdown>
+
+              {/* Thresholds */}
+              <InfoDropdown
+                title="Variance Thresholds & Escalation Matrix"
+                color={t.amber}
+                borderColor={t.amberBorder}
+                bgColor={t.amberDim}
+                icon={<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={t.amber} strokeWidth="2" strokeLinecap="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>}
+              >
+                <div style={{ marginTop: 4 }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", borderRadius: 8, overflow: "hidden" }}>
+                    <thead>
+                      <tr>
+                        {["Range", "Severity", "Required Action"].map((h) => (
+                          <th key={h} style={{
+                            padding: "8px 12px", textAlign: "left", fontSize: 10, fontWeight: 600,
+                            color: t.textDim, textTransform: "uppercase", letterSpacing: "0.06em",
+                            borderBottom: `1px solid ${t.divider}`, background: "rgba(0,0,0,0.2)",
+                          }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {currentType.thresholds.map((th, i) => {
+                        const severityColors = {
+                          Immaterial: { bg: t.greenDim, color: t.green, border: t.greenBorder },
+                          Stable: { bg: t.greenDim, color: t.green, border: t.greenBorder },
+                          Notable: { bg: t.amberDim, color: t.amber, border: t.amberBorder },
+                          Trending: { bg: t.amberDim, color: t.amber, border: t.amberBorder },
+                          Significant: { bg: "rgba(249,115,22,0.1)", color: "#F97316", border: "rgba(249,115,22,0.25)" },
+                          Escalating: { bg: "rgba(249,115,22,0.1)", color: "#F97316", border: "rgba(249,115,22,0.25)" },
+                          Critical: { bg: t.redDim, color: t.red, border: t.redBorder },
+                          Anomalous: { bg: t.redDim, color: t.red, border: t.redBorder },
+                        };
+                        const sc = severityColors[th.label] || { bg: t.accentDim, color: t.accent, border: t.accentBorder };
+                        return (
+                          <tr key={i}>
+                            <td style={{ padding: "10px 12px", fontSize: 12, fontFamily: "'JetBrains Mono', monospace", color: t.white, fontWeight: 500, borderBottom: `1px solid ${t.divider}` }}>{th.range}</td>
+                            <td style={{ padding: "10px 12px", borderBottom: `1px solid ${t.divider}` }}>
+                              <span style={{
+                                fontSize: 10, padding: "3px 8px", borderRadius: 4, fontWeight: 600,
+                                textTransform: "uppercase", letterSpacing: "0.04em",
+                                background: sc.bg, color: sc.color, border: `1px solid ${sc.border}`,
+                              }}>{th.label}</span>
+                            </td>
+                            <td style={{ padding: "10px 12px", fontSize: 12, color: t.text, lineHeight: 1.5, borderBottom: `1px solid ${t.divider}` }}>{th.action}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </InfoDropdown>
+
+              {/* Data Security */}
+              <InfoDropdown
+                title="Data Security & Privacy"
+                color={t.cyan}
+                borderColor={t.cyanBorder}
+                bgColor={t.cyanDim}
+                icon={<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={t.cyan} strokeWidth="2" strokeLinecap="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>}
+              >
+                <div style={{ marginTop: 4 }}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                    {/* Architecture diagram */}
+                    <div style={{
+                      padding: "16px 20px", borderRadius: 8,
+                      background: "rgba(0,0,0,0.25)", border: `1px solid ${t.divider}`,
+                    }}>
+                      <div style={{ fontSize: 11, fontWeight: 600, color: t.textDim, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 12 }}>Data Flow Architecture</div>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 0, flexWrap: "wrap" }}>
+                        {[
+                          { label: "Your Data", icon: "📄", sub: "CSV / XLSX" },
+                          null,
+                          { label: "Python Engine", icon: "🐍", sub: "Variance Calc" },
+                          null,
+                          { label: "PII Proxy", icon: "🛡️", sub: "Scrubs Sensitive Data" },
+                          null,
+                          { label: "LLM", icon: "🤖", sub: "Commentary Only" },
+                        ].map((item, i) =>
+                          item === null ? (
+                            <svg key={i} width="28" height="12" viewBox="0 0 28 12" style={{ flexShrink: 0 }}>
+                              <line x1="2" y1="6" x2="22" y2="6" stroke={t.textDim} strokeWidth="1.5" />
+                              <polyline points="18,2 24,6 18,10" fill="none" stroke={t.textDim} strokeWidth="1.5" />
+                            </svg>
+                          ) : (
+                            <div key={i} style={{
+                              padding: "10px 14px", borderRadius: 8, textAlign: "center", minWidth: 90,
+                              background: item.label === "PII Proxy" ? t.cyanDim : "rgba(255,255,255,0.03)",
+                              border: `1px solid ${item.label === "PII Proxy" ? t.cyanBorder : t.divider}`,
+                            }}>
+                              <div style={{ fontSize: 18, marginBottom: 4 }}>{item.icon}</div>
+                              <div style={{ fontSize: 11, fontWeight: 600, color: t.white }}>{item.label}</div>
+                              <div style={{ fontSize: 9, color: t.textDim, marginTop: 2 }}>{item.sub}</div>
+                            </div>
+                          )
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Security details */}
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                      {[
+                        {
+                          title: "LLM Proxy Layer",
+                          body: "All data sent to the LLM passes through a dedicated proxy that strips personally identifiable information (PII), vendor names, employee IDs, and cost center codes. The LLM receives only anonymized, aggregated variance figures for commentary generation.",
+                          icon: "🛡️",
+                        },
+                        {
+                          title: "Data Residency",
+                          body: "Raw financial data never leaves your environment. Variance calculations are performed locally via the Python engine. Only sanitized numerical summaries are transmitted to the commentary service.",
+                          icon: "🏢",
+                        },
+                        {
+                          title: "Access Controls",
+                          body: "Role-based access ensures only authorized users can run analyses. Market-level data segmentation enforced at the query layer. All access is logged with full audit trail.",
+                          icon: "🔑",
+                        },
+                        {
+                          title: "Compliance",
+                          body: "SOC 2 Type II compliant infrastructure. Data handling follows GDPR and CCPA requirements. LLM provider contractually bound to zero data retention for all inputs.",
+                          icon: "✅",
+                        },
+                      ].map((sec, i) => (
+                        <div key={i} style={{
+                          padding: "14px 16px", borderRadius: 8,
+                          background: "rgba(0,0,0,0.15)", border: `1px solid ${t.divider}`,
+                        }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                            <span style={{ fontSize: 14 }}>{sec.icon}</span>
+                            <span style={{ fontSize: 12, fontWeight: 600, color: t.white }}>{sec.title}</span>
+                          </div>
+                          <p style={{ fontSize: 11, lineHeight: 1.6, color: t.textDim, margin: 0 }}>{sec.body}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </InfoDropdown>
+            </div>
+
             {/* ═══ Run Button ═══ */}
             <button
               onClick={runAnalysis}
@@ -476,7 +860,7 @@ export default function VarianceAnalysisTool() {
                 boxShadow: file && !analyzing ? "0 4px 24px rgba(59,130,246,0.25)" : "none",
               }}
             >
-              {analyzing ? "Analyzing..." : "Run Analysis"}
+              {analyzing ? "Analyzing..." : `Run ${currentType.label}`}
             </button>
 
             {/* Progress Bar */}
@@ -506,7 +890,16 @@ export default function VarianceAnalysisTool() {
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
               <div>
                 <div style={{ fontSize: 20, fontWeight: 700, color: t.white, letterSpacing: "-0.02em" }}>Analysis Results</div>
-                <div style={{ fontSize: 12, color: t.textDim, marginTop: 3 }}>{marketLabel} • {file?.name} • {new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 5 }}>
+                  <span style={{
+                    fontSize: 10, padding: "3px 9px", borderRadius: 5, fontWeight: 600,
+                    background: results.analysisType === "accounting" ? t.amberDim : t.accentDim,
+                    color: results.analysisType === "accounting" ? t.amber : t.accent,
+                    border: `1px solid ${results.analysisType === "accounting" ? t.amberBorder : t.accentBorder}`,
+                    textTransform: "uppercase", letterSpacing: "0.04em",
+                  }}>{resType.label}</span>
+                  <span style={{ fontSize: 12, color: t.textDim }}>{marketLabel} · {file?.name} · {new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</span>
+                </div>
               </div>
               <button
                 onClick={() => { setResults(null); setFile(null); }}
@@ -525,8 +918,8 @@ export default function VarianceAnalysisTool() {
               return (
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 14 }}>
                   {[
-                    { label: "July 2025", value: fmt(totPrior), sub: "Total Spend", color: t.textDim },
-                    { label: "August 2025", value: fmt(totCurrent), sub: "Total Spend", color: t.accent },
+                    { label: resType.priorLabel, value: fmt(totPrior), sub: "Total Spend", color: t.textDim },
+                    { label: resType.currentLabel, value: fmt(totCurrent), sub: "Total Spend", color: t.accent },
                     { label: "Total Variance", value: fmtVar(totVar), sub: fmtPct(totPct), color: totVar >= 0 ? t.red : t.green },
                   ].map((kpi, i) => (
                     <div key={i} style={{ ...sCard, padding: "18px 20px" }}>
@@ -539,6 +932,104 @@ export default function VarianceAnalysisTool() {
               );
             })()}
 
+            {/* ─── Results-level Info Dropdowns ─── */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <InfoDropdown
+                title={`${resType.label} — Formula & Interpretation`}
+                color={t.accent}
+                borderColor={t.accentBorder}
+                bgColor={t.accentDim}
+                icon={<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={t.accent} strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>}
+              >
+                <div style={{ marginTop: 4 }}>
+                  <div style={{
+                    padding: "10px 14px", borderRadius: 6,
+                    background: "rgba(0,0,0,0.25)", border: `1px solid ${t.divider}`,
+                    fontFamily: "'JetBrains Mono', monospace", fontSize: 13, fontWeight: 500,
+                    color: t.accent, marginBottom: 10,
+                  }}>{resType.formula}</div>
+                  <p style={{ fontSize: 12, lineHeight: 1.6, color: t.text, margin: 0 }}>{resType.interpretation}</p>
+                </div>
+              </InfoDropdown>
+
+              <InfoDropdown
+                title="Active Thresholds for This Analysis"
+                color={t.amber}
+                borderColor={t.amberBorder}
+                bgColor={t.amberDim}
+                icon={<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={t.amber} strokeWidth="2" strokeLinecap="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>}
+              >
+                <div style={{ marginTop: 4, display: "flex", flexDirection: "column", gap: 6 }}>
+                  {resType.thresholds.map((th, i) => {
+                    const colors = [
+                      { bg: t.greenDim, color: t.green, border: t.greenBorder },
+                      { bg: t.amberDim, color: t.amber, border: t.amberBorder },
+                      { bg: "rgba(249,115,22,0.1)", color: "#F97316", border: "rgba(249,115,22,0.25)" },
+                      { bg: t.redDim, color: t.red, border: t.redBorder },
+                    ];
+                    const sc = colors[i] || colors[0];
+                    return (
+                      <div key={i} style={{
+                        display: "flex", alignItems: "center", gap: 12, padding: "8px 12px", borderRadius: 6,
+                        background: "rgba(0,0,0,0.15)", border: `1px solid ${t.divider}`,
+                      }}>
+                        <span style={{
+                          fontSize: 10, padding: "3px 8px", borderRadius: 4, fontWeight: 700,
+                          fontFamily: "'JetBrains Mono', monospace", minWidth: 70, textAlign: "center",
+                          background: sc.bg, color: sc.color, border: `1px solid ${sc.border}`,
+                        }}>{th.range}</span>
+                        <span style={{ fontSize: 11, fontWeight: 600, color: t.white, minWidth: 70 }}>{th.label}</span>
+                        <span style={{ fontSize: 11, color: t.textDim }}>{th.action}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </InfoDropdown>
+
+              <InfoDropdown
+                title="Data Security — How Your Data Was Processed"
+                color={t.cyan}
+                borderColor={t.cyanBorder}
+                bgColor={t.cyanDim}
+                icon={<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={t.cyan} strokeWidth="2" strokeLinecap="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>}
+              >
+                <div style={{ marginTop: 4 }}>
+                  <div style={{
+                    display: "flex", alignItems: "center", gap: 0, justifyContent: "center", padding: "14px 0",
+                    flexWrap: "wrap",
+                  }}>
+                    {[
+                      { label: "Raw Data", status: "Local Only", color: t.green },
+                      { label: "Python Calc", status: "Local Only", color: t.green },
+                      { label: "PII Proxy", status: "Scrubbed", color: t.cyan },
+                      { label: "LLM Commentary", status: "Anonymized", color: t.amber },
+                    ].map((step, i) => (
+                      <div key={i} style={{ display: "flex", alignItems: "center", gap: 0 }}>
+                        <div style={{ textAlign: "center", padding: "8px 12px" }}>
+                          <div style={{ width: 8, height: 8, borderRadius: "50%", background: step.color, margin: "0 auto 6px" }} />
+                          <div style={{ fontSize: 11, fontWeight: 600, color: t.white }}>{step.label}</div>
+                          <div style={{
+                            fontSize: 9, marginTop: 3, padding: "2px 6px", borderRadius: 3,
+                            background: step.color === t.green ? t.greenDim : step.color === t.cyan ? t.cyanDim : t.amberDim,
+                            color: step.color, fontWeight: 600,
+                          }}>{step.status}</div>
+                        </div>
+                        {i < 3 && (
+                          <svg width="20" height="12" viewBox="0 0 20 12" style={{ flexShrink: 0 }}>
+                            <line x1="0" y1="6" x2="14" y2="6" stroke={t.textMuted} strokeWidth="1" />
+                            <polyline points="11,3 16,6 11,9" fill="none" stroke={t.textMuted} strokeWidth="1" />
+                          </svg>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  <p style={{ fontSize: 11, lineHeight: 1.6, color: t.textDim, margin: "8px 0 0 0", textAlign: "center" }}>
+                    The LLM proxy filters all PII, vendor identifiers, employee data, and cost center codes before any data reaches the commentary engine. Raw financial data never leaves your environment.
+                  </p>
+                </div>
+              </InfoDropdown>
+            </div>
+
             {/* ─── Top-Level Variance by Spend Category ─── */}
             <div style={{ ...sCard, overflow: "hidden" }}>
               <div style={{ padding: "16px 20px", borderBottom: `1px solid ${t.divider}`, display: "flex", alignItems: "center", gap: 8 }}>
@@ -548,7 +1039,7 @@ export default function VarianceAnalysisTool() {
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
                 <thead>
                   <tr>
-                    {["Spend Category", "July 2025", "August 2025", "Variance ($)", "Variance (%)"].map((h) => (
+                    {["Spend Category", resType.priorLabel, resType.currentLabel, "Variance ($)", "Variance (%)"].map((h) => (
                       <th key={h} style={{ ...sTh, textAlign: h === "Spend Category" ? "left" : "right" }}>{h}</th>
                     ))}
                   </tr>
@@ -578,7 +1069,7 @@ export default function VarianceAnalysisTool() {
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={t.amber} strokeWidth="2" strokeLinecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
                   <span style={{ fontSize: 14, fontWeight: 700, color: t.white }}>Variance Drivers</span>
                 </div>
-                <span style={{ fontSize: 11, color: t.textDim }}>Grouped by Cost Center & Supplier • Sorted by |Variance| desc</span>
+                <span style={{ fontSize: 11, color: t.textDim }}>Grouped by Cost Center & Supplier · Sorted by |Variance| desc</span>
               </div>
               <div style={{ padding: "0" }}>
                   {(() => {
@@ -642,7 +1133,7 @@ export default function VarianceAnalysisTool() {
 
             {/* Footer */}
             <div style={{ textAlign: "center", padding: "8px 0 16px", fontSize: 11, color: t.textMuted }}>
-              Generated {new Date().toLocaleString()} • Variance Analysis Tool • {marketLabel}
+              Generated {new Date().toLocaleString()} · {resType.label} · {marketLabel}
             </div>
           </div>
         )}
