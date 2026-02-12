@@ -9,7 +9,7 @@ import { useState, useRef, useCallback } from "react";
 const analysisTypes = {
   accounting: {
     label: "Accounting Variance",
-    description: "Compares actual spend against budgeted/standard costs using GAAP-aligned cost accounting methodology.",
+    description: "Compares actual spend against budgeted/standard costs using GAAP-aligned cost accounting methodology. Single file input.",
     formula: "Variance = Actual Cost − Budgeted (Standard) Cost",
     interpretation: "A positive variance indicates over-budget (unfavorable); a negative variance indicates under-budget (favorable).",
     thresholds: [
@@ -29,7 +29,7 @@ const analysisTypes = {
   },
   finance: {
     label: "Financial Variance (MoM)",
-    description: "Month-over-month trend analysis comparing current period spend to prior period actuals for operational insight.",
+    description: "Month-over-month trend analysis comparing up to 5 periods of spend data for operational insight.",
     formula: "Variance = Current Month Actual − Prior Month Actual",
     interpretation: "Identifies spend trajectory and anomalies. Positive = spend increase; Negative = spend decrease.",
     thresholds: [
@@ -369,7 +369,7 @@ function DriverGroup({ category, drivers, groupTotal }) {
 export default function VarianceAnalysisTool() {
   const [analysisType, setAnalysisType] = useState("finance");
   const [typeDropdownOpen, setTypeDropdownOpen] = useState(false);
-  const [file, setFile] = useState(null);
+  const [files, setFiles] = useState([]);
   const [dragging, setDragging] = useState(false);
   const [market, setMarket] = useState("all");
   const [commentary, setCommentary] = useState("ai");
@@ -381,17 +381,34 @@ export default function VarianceAnalysisTool() {
   const dropdownRef = useRef(null);
 
   const currentType = analysisTypes[analysisType];
+  const isMultiFile = analysisType === "finance";
+  const maxFiles = isMultiFile ? 5 : 1;
+  const hasFiles = files.length > 0;
+  const canAddMore = files.length < maxFiles;
+
+  const isValidFile = (f) => f && (f.name.endsWith(".csv") || f.name.endsWith(".xlsx"));
+
+  const addFiles = useCallback((newFiles) => {
+    const valid = Array.from(newFiles).filter(isValidFile);
+    setFiles((prev) => {
+      const combined = [...prev, ...valid];
+      return combined.slice(0, maxFiles);
+    });
+  }, [maxFiles]);
+
+  const removeFile = (index) => {
+    setFiles((prev) => prev.filter((_, i) => i !== index));
+  };
 
   const handleDrop = useCallback((e) => {
     e.preventDefault();
     setDragging(false);
-    const f = e.dataTransfer.files[0];
-    if (f && (f.name.endsWith(".csv") || f.name.endsWith(".xlsx"))) setFile(f);
-  }, []);
+    addFiles(e.dataTransfer.files);
+  }, [addFiles]);
 
   const handleFile = (e) => {
-    const f = e.target.files[0];
-    if (f) setFile(f);
+    addFiles(e.target.files);
+    e.target.value = "";
   };
 
   const runAnalysis = () => {
@@ -415,6 +432,7 @@ export default function VarianceAnalysisTool() {
           market: marketFilter,
           commentaryType: commentary,
           analysisType: analysisType,
+          files: [...files],
         });
         setAnalyzing(false);
       }
@@ -464,6 +482,23 @@ export default function VarianceAnalysisTool() {
             <div style={{ fontSize: 11, color: t.textDim, marginTop: 1 }}>300x faster than manual analysis · Python for variance calculations, AI for commentary</div>
           </div>
         </div>
+        <a
+          href="https://github.com/dhakshanayashwanth/variance-analysis-tool/tree/main"
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{
+            display: "flex", alignItems: "center", gap: 6,
+            fontSize: 12, fontWeight: 500, color: t.textDim,
+            textDecoration: "none", padding: "7px 14px", borderRadius: 7,
+            border: `1px solid ${t.cardBorder}`, background: "transparent",
+            transition: "all 0.15s",
+          }}
+          onMouseEnter={(e) => { e.currentTarget.style.borderColor = t.accentBorder; e.currentTarget.style.color = t.white; }}
+          onMouseLeave={(e) => { e.currentTarget.style.borderColor = t.cardBorder; e.currentTarget.style.color = t.textDim; }}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
+          GitHub
+        </a>
       </div>
 
       <div style={{ maxWidth: 1200, margin: "0 auto", padding: "28px 24px" }}>
@@ -527,7 +562,7 @@ export default function VarianceAnalysisTool() {
                 {Object.entries(analysisTypes).map(([key, val]) => (
                   <button
                     key={key}
-                    onClick={() => { setAnalysisType(key); setTypeDropdownOpen(false); }}
+                    onClick={() => { setAnalysisType(key); setTypeDropdownOpen(false); setFiles([]); }}
                     style={{
                       width: "100%", padding: "14px 20px",
                       background: analysisType === key ? "rgba(59,130,246,0.06)" : "transparent",
@@ -576,37 +611,100 @@ export default function VarianceAnalysisTool() {
               onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
               onDragLeave={() => setDragging(false)}
               onDrop={handleDrop}
-              onClick={() => fileRef.current?.click()}
+              onClick={() => canAddMore && fileRef.current?.click()}
               style={{
                 ...sCard,
-                padding: file ? "20px 28px" : "48px 28px",
+                padding: hasFiles ? "20px 28px" : "48px 28px",
                 textAlign: "center",
-                cursor: "pointer",
-                borderStyle: file ? "solid" : "dashed",
-                borderColor: dragging ? t.accent : file ? t.greenBorder : t.cardBorder,
-                background: dragging ? t.accentDim : file ? t.greenDim : t.card,
+                cursor: canAddMore ? "pointer" : "default",
+                borderStyle: hasFiles && !canAddMore ? "solid" : "dashed",
+                borderColor: dragging ? t.accent : (hasFiles && !canAddMore) ? t.greenBorder : t.cardBorder,
+                background: dragging ? t.accentDim : (hasFiles && !canAddMore) ? t.greenDim : t.card,
                 transition: "all 0.2s",
               }}
             >
-              <input ref={fileRef} type="file" accept=".csv,.xlsx" onChange={handleFile} style={{ display: "none" }} />
-              {file ? (
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12 }}>
-                  <div style={{ width: 36, height: 36, borderRadius: 8, background: t.greenDim, border: `1px solid ${t.greenBorder}`, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={t.green} strokeWidth="2.5" strokeLinecap="round"><path d="M20 6L9 17l-5-5"/></svg>
+              <input ref={fileRef} type="file" accept=".csv,.xlsx" multiple={isMultiFile} onChange={handleFile} style={{ display: "none" }} />
+              {hasFiles ? (
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  {/* File header */}
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: files.length > 1 ? 4 : 0 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <div style={{ width: 28, height: 28, borderRadius: 6, background: t.greenDim, border: `1px solid ${t.greenBorder}`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={t.green} strokeWidth="2.5" strokeLinecap="round"><path d="M20 6L9 17l-5-5"/></svg>
+                      </div>
+                      <span style={{ fontSize: 13, fontWeight: 600, color: t.white }}>
+                        {files.length} {files.length === 1 ? "file" : "files"} selected
+                      </span>
+                      {isMultiFile && (
+                        <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 10, background: t.accentDim, border: `1px solid ${t.accentBorder}`, color: t.accent, fontWeight: 600 }}>
+                          {files.length} / {maxFiles}
+                        </span>
+                      )}
+                    </div>
+                    {canAddMore && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); fileRef.current?.click(); }}
+                        style={{
+                          padding: "5px 12px", borderRadius: 6, fontSize: 11, fontWeight: 600,
+                          background: t.accentDim, border: `1px solid ${t.accentBorder}`, color: t.accent,
+                          cursor: "pointer", fontFamily: "inherit",
+                        }}
+                      >
+                        + Add File
+                      </button>
+                    )}
                   </div>
-                  <div style={{ textAlign: "left" }}>
-                    <div style={{ fontSize: 14, fontWeight: 600, color: t.white }}>{file.name}</div>
-                    <div style={{ fontSize: 11, color: t.textDim, marginTop: 2 }}>{(file.size / 1024).toFixed(1)} KB · Ready for analysis</div>
-                  </div>
-                  <button onClick={(e) => { e.stopPropagation(); setFile(null); }} style={{ marginLeft: 12, background: "transparent", border: "none", color: t.textDim, cursor: "pointer", fontSize: 18, fontFamily: "inherit" }}>×</button>
+                  {/* File list */}
+                  {files.map((f, i) => {
+                    const monthLabels = ["Month 1 (Oldest)", "Month 2", "Month 3", "Month 4", "Month 5 (Current)"];
+                    const label = isMultiFile ? monthLabels[i] || `Month ${i + 1}` : null;
+                    return (
+                      <div key={i} style={{
+                        display: "flex", alignItems: "center", justifyContent: "space-between",
+                        padding: "8px 14px", borderRadius: 7,
+                        background: "rgba(255,255,255,0.02)", border: `1px solid ${t.divider}`,
+                      }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={t.textDim} strokeWidth="2" strokeLinecap="round">
+                            <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/>
+                          </svg>
+                          <div style={{ textAlign: "left" }}>
+                            <div style={{ fontSize: 12, fontWeight: 500, color: t.white }}>{f.name}</div>
+                            <div style={{ fontSize: 10, color: t.textDim, marginTop: 1 }}>
+                              {(f.size / 1024).toFixed(1)} KB
+                              {label && <span> · {label}</span>}
+                            </div>
+                          </div>
+                        </div>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); removeFile(i); }}
+                          style={{ background: "transparent", border: "none", color: t.textDim, cursor: "pointer", fontSize: 16, fontFamily: "inherit", padding: "2px 6px", borderRadius: 4 }}
+                          onMouseEnter={(e) => e.currentTarget.style.color = t.red}
+                          onMouseLeave={(e) => e.currentTarget.style.color = t.textDim}
+                        >×</button>
+                      </div>
+                    );
+                  })}
+                  {isMultiFile && canAddMore && (
+                    <div style={{ fontSize: 11, color: t.textDim, marginTop: 2 }}>
+                      Upload up to {maxFiles} monthly files for trend comparison · Drop files or click "Add File"
+                    </div>
+                  )}
                 </div>
               ) : (
                 <>
                   <div style={{ width: 52, height: 52, borderRadius: 12, background: t.accentDim, border: `1px solid ${t.accentBorder}`, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 14px" }}>
                     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={t.accent} strokeWidth="2" strokeLinecap="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
                   </div>
-                  <div style={{ fontSize: 14, fontWeight: 600, color: t.white, marginBottom: 4 }}>Drop your spend data file here</div>
-                  <div style={{ fontSize: 12, color: t.textDim }}>or click to browse · CSV or XLSX</div>
+                  <div style={{ fontSize: 14, fontWeight: 600, color: t.white, marginBottom: 4 }}>
+                    {isMultiFile ? "Drop your monthly spend data files here" : "Drop your spend data file here"}
+                  </div>
+                  <div style={{ fontSize: 12, color: t.textDim }}>
+                    {isMultiFile
+                      ? `Upload up to ${maxFiles} files for MoM trend analysis · CSV or XLSX`
+                      : "or click to browse · CSV or XLSX"
+                    }
+                  </div>
                 </>
               )}
             </div>
@@ -843,24 +941,24 @@ export default function VarianceAnalysisTool() {
             {/* ═══ Run Button ═══ */}
             <button
               onClick={runAnalysis}
-              disabled={!file || analyzing}
+              disabled={!hasFiles || analyzing}
               style={{
                 width: "100%",
                 padding: "14px",
                 borderRadius: 10,
                 border: "none",
-                background: file && !analyzing ? `linear-gradient(135deg, ${t.accent}, ${t.purple})` : t.cardBorder,
-                color: file && !analyzing ? "#fff" : t.textMuted,
+                background: hasFiles && !analyzing ? `linear-gradient(135deg, ${t.accent}, ${t.purple})` : t.cardBorder,
+                color: hasFiles && !analyzing ? "#fff" : t.textMuted,
                 fontSize: 14,
                 fontWeight: 700,
-                cursor: file && !analyzing ? "pointer" : "not-allowed",
+                cursor: hasFiles && !analyzing ? "pointer" : "not-allowed",
                 fontFamily: "inherit",
                 letterSpacing: "0.02em",
                 transition: "all 0.2s",
-                boxShadow: file && !analyzing ? "0 4px 24px rgba(59,130,246,0.25)" : "none",
+                boxShadow: hasFiles && !analyzing ? "0 4px 24px rgba(59,130,246,0.25)" : "none",
               }}
             >
-              {analyzing ? "Analyzing..." : `Run ${currentType.label}`}
+              {analyzing ? "Analyzing..." : `Run ${currentType.label}${isMultiFile && files.length > 1 ? ` (${files.length} files)` : ""}`}
             </button>
 
             {/* Progress Bar */}
@@ -898,11 +996,13 @@ export default function VarianceAnalysisTool() {
                     border: `1px solid ${results.analysisType === "accounting" ? t.amberBorder : t.accentBorder}`,
                     textTransform: "uppercase", letterSpacing: "0.04em",
                   }}>{resType.label}</span>
-                  <span style={{ fontSize: 12, color: t.textDim }}>{marketLabel} · {file?.name} · {new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</span>
+                  <span style={{ fontSize: 12, color: t.textDim }}>
+                    {marketLabel} · {results.files?.length > 1 ? `${results.files.length} files` : results.files?.[0]?.name || "—"} · {new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                  </span>
                 </div>
               </div>
               <button
-                onClick={() => { setResults(null); setFile(null); }}
+                onClick={() => { setResults(null); setFiles([]); }}
                 style={{ padding: "8px 18px", borderRadius: 7, border: `1px solid ${t.cardBorder}`, background: "transparent", color: t.text, fontSize: 12, fontWeight: 500, cursor: "pointer", fontFamily: "inherit" }}
               >
                 ← New Analysis
@@ -1132,8 +1232,27 @@ export default function VarianceAnalysisTool() {
             )}
 
             {/* Footer */}
-            <div style={{ textAlign: "center", padding: "8px 0 16px", fontSize: 11, color: t.textMuted }}>
-              Generated {new Date().toLocaleString()} · {resType.label} · {marketLabel}
+            <div style={{ textAlign: "center", padding: "8px 0 16px" }}>
+              <div style={{ fontSize: 11, color: t.textMuted, marginBottom: 8 }}>
+                Generated {new Date().toLocaleString()} · {resType.label} · {marketLabel}
+              </div>
+              <a
+                href="https://github.com/dhakshanayashwanth/variance-analysis-tool/tree/main"
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{
+                  display: "inline-flex", alignItems: "center", gap: 6,
+                  fontSize: 11, fontWeight: 500, color: t.textDim,
+                  textDecoration: "none", padding: "5px 12px", borderRadius: 6,
+                  border: `1px solid ${t.divider}`, background: "rgba(255,255,255,0.02)",
+                  transition: "all 0.15s",
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.borderColor = t.accentBorder; e.currentTarget.style.color = t.accent; }}
+                onMouseLeave={(e) => { e.currentTarget.style.borderColor = t.divider; e.currentTarget.style.color = t.textDim; }}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
+                View on GitHub
+              </a>
             </div>
           </div>
         )}
