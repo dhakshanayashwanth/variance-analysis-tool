@@ -188,7 +188,7 @@ const fmtPct = (n) => `${n >= 0 ? "+" : ""}${n.toFixed(1)}%`;
 
 // ─── Colors & Theme (Salesforce Lightning-aligned) ───
 const t = {
-  bg: "#F4F6F9",
+  bg: "#EBF0F5",
   card: "#FFFFFF",
   cardBorder: "#E5E7EB",
   cardHover: "#F9FAFB",
