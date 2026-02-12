@@ -186,36 +186,36 @@ const fmtVar = (n) => {
 };
 const fmtPct = (n) => `${n >= 0 ? "+" : ""}${n.toFixed(1)}%`;
 
-// ─── Colors & Theme ───
+// ─── Colors & Theme (Salesforce Lightning-aligned) ───
 const t = {
-  bg: "#0B1121",
-  card: "#111827",
-  cardBorder: "#1E293B",
-  cardHover: "#151D2E",
-  accent: "#3B82F6",
-  accentDim: "rgba(59,130,246,0.12)",
-  accentBorder: "rgba(59,130,246,0.25)",
-  green: "#10B981",
-  greenDim: "rgba(16,185,129,0.12)",
-  greenBorder: "rgba(16,185,129,0.25)",
-  red: "#EF4444",
-  redDim: "rgba(239,68,68,0.1)",
-  redBorder: "rgba(239,68,68,0.2)",
-  amber: "#F59E0B",
-  amberDim: "rgba(245,158,11,0.1)",
-  amberBorder: "rgba(245,158,11,0.2)",
-  white: "#F8FAFC",
-  text: "#CBD5E1",
-  textDim: "#64748B",
-  textMuted: "#475569",
-  headerBg: "#0F172A",
-  rowHover: "rgba(59,130,246,0.04)",
-  divider: "#1E293B",
-  purple: "#8B5CF6",
-  purpleDim: "rgba(139,92,246,0.12)",
-  cyan: "#06B6D4",
-  cyanDim: "rgba(6,182,212,0.10)",
-  cyanBorder: "rgba(6,182,212,0.25)",
+  bg: "#F4F6F9",
+  card: "#FFFFFF",
+  cardBorder: "#E5E7EB",
+  cardHover: "#F9FAFB",
+  accent: "#0176D3",
+  accentDim: "rgba(1,118,211,0.08)",
+  accentBorder: "rgba(1,118,211,0.22)",
+  green: "#2E844A",
+  greenDim: "rgba(46,132,74,0.08)",
+  greenBorder: "rgba(46,132,74,0.22)",
+  red: "#EA001E",
+  redDim: "rgba(234,0,30,0.06)",
+  redBorder: "rgba(234,0,30,0.18)",
+  amber: "#CA8A04",
+  amberDim: "rgba(202,138,4,0.08)",
+  amberBorder: "rgba(202,138,4,0.20)",
+  white: "#181818",
+  text: "#3E3E3C",
+  textDim: "#706E6B",
+  textMuted: "#939297",
+  headerBg: "#F7F9FB",
+  rowHover: "rgba(1,118,211,0.04)",
+  divider: "#E5E7EB",
+  purple: "#7B61FF",
+  purpleDim: "rgba(123,97,255,0.08)",
+  cyan: "#0891B2",
+  cyanDim: "rgba(8,145,178,0.07)",
+  cyanBorder: "rgba(8,145,178,0.22)",
 };
 
 // ─── Info Dropdown Component ───
@@ -243,7 +243,7 @@ function InfoDropdown({ icon, title, color, borderColor, bgColor, children }) {
           fontFamily: "inherit",
           transition: "background 0.15s",
         }}
-        onMouseEnter={(e) => { if (!open) e.currentTarget.style.background = "rgba(255,255,255,0.02)"; }}
+        onMouseEnter={(e) => { if (!open) e.currentTarget.style.background = "rgba(0,0,0,0.02)"; }}
         onMouseLeave={(e) => { if (!open) e.currentTarget.style.background = "transparent"; }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -297,7 +297,7 @@ function DriverCostCenter({ costCenter, supplier, variance }) {
       </button>
       {open && (
         <div style={{ padding: "0 14px 14px 56px", animation: "fadeIn 0.15s ease" }}>
-          <div style={{ background: "rgba(255,255,255,0.02)", borderRadius: 8, border: `1px solid ${t.divider}`, padding: "14px 18px" }}>
+          <div style={{ background: "rgba(0,0,0,0.02)", borderRadius: 8, border: `1px solid ${t.divider}`, padding: "14px 18px" }}>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 12 }}>
               <div>
                 <div style={{ fontSize: 10, fontWeight: 600, color: t.textDim, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>Supplier</div>
@@ -337,12 +337,12 @@ function DriverGroup({ category, drivers, groupTotal }) {
       <button
         onClick={() => setOpen(!open)}
         style={{
-          width: "100%", padding: "14px 18px", background: "rgba(59,130,246,0.04)", border: "none",
+          width: "100%", padding: "14px 18px", background: "rgba(1,118,211,0.04)", border: "none",
           cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between",
           fontFamily: "inherit", transition: "background 0.1s",
         }}
-        onMouseEnter={(e) => e.currentTarget.style.background = "rgba(59,130,246,0.08)"}
-        onMouseLeave={(e) => e.currentTarget.style.background = "rgba(59,130,246,0.04)"}
+        onMouseEnter={(e) => e.currentTarget.style.background = "rgba(1,118,211,0.08)"}
+        onMouseLeave={(e) => e.currentTarget.style.background = "rgba(1,118,211,0.04)"}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={t.accent} strokeWidth="2.5" strokeLinecap="round"
@@ -442,7 +442,7 @@ export default function VarianceAnalysisTool() {
   const marketLabel = market === "all" ? "Consolidated (All Markets)" : market === "nonjp" ? "Non-JP Markets" : "JP Market";
 
   // ─── Styles ───
-  const sCard = { background: t.card, border: `1px solid ${t.cardBorder}`, borderRadius: 10 };
+  const sCard = { background: t.card, border: `1px solid ${t.cardBorder}`, borderRadius: 10, boxShadow: "0 1px 3px rgba(0,0,0,0.06)" };
   const sLabel = { fontSize: 11, fontWeight: 600, color: t.textDim, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 };
   const sBtn = (active) => ({
     padding: "8px 16px",
@@ -457,7 +457,7 @@ export default function VarianceAnalysisTool() {
     fontFamily: "inherit",
   });
   const sTh = { padding: "10px 14px", textAlign: "left", fontSize: 11, fontWeight: 600, color: t.textDim, textTransform: "uppercase", letterSpacing: "0.06em", borderBottom: `1px solid ${t.divider}`, background: t.headerBg };
-  const sTd = (i) => ({ padding: "10px 14px", fontSize: 13, color: t.text, borderBottom: `1px solid ${t.divider}`, background: i % 2 === 0 ? "transparent" : "rgba(255,255,255,0.01)" });
+  const sTd = (i) => ({ padding: "10px 14px", fontSize: 13, color: t.text, borderBottom: `1px solid ${t.divider}`, background: i % 2 === 0 ? "transparent" : "rgba(0,0,0,0.015)" });
 
   const varColor = (v) => v >= 0 ? t.red : t.green;
   const varBg = (v) => v >= 0 ? t.redDim : t.greenDim;
@@ -472,9 +472,9 @@ export default function VarianceAnalysisTool() {
       `}</style>
 
       {/* ═══ Header ═══ */}
-      <div style={{ padding: "16px 32px", borderBottom: `1px solid ${t.divider}`, display: "flex", alignItems: "center", justifyContent: "space-between", background: "rgba(15,23,42,0.8)", backdropFilter: "blur(12px)" }}>
+      <div style={{ padding: "16px 32px", borderBottom: `1px solid ${t.divider}`, display: "flex", alignItems: "center", justifyContent: "space-between", background: "rgba(255,255,255,0.95)", backdropFilter: "blur(12px)" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-          <div style={{ width: 32, height: 32, borderRadius: 8, background: `linear-gradient(135deg, ${t.accent}, ${t.purple})`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div style={{ width: 32, height: 32, borderRadius: 8, background: `linear-gradient(135deg, #0176D3, #032D60)`, display: "flex", alignItems: "center", justifyContent: "center" }}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round"><path d="M3 3v18h18"/><path d="M7 16l4-8 4 4 5-9"/></svg>
           </div>
           <div>
@@ -556,7 +556,7 @@ export default function VarianceAnalysisTool() {
               <div style={{
                 position: "absolute", top: "100%", left: 0, right: 0, zIndex: 50,
                 marginTop: 6, borderRadius: 10, border: `1px solid ${t.accentBorder}`,
-                background: t.card, boxShadow: "0 12px 40px rgba(0,0,0,0.5)",
+                background: t.card, boxShadow: "0 8px 32px rgba(0,0,0,0.12)",
                 animation: "fadeIn 0.15s ease", overflow: "hidden",
               }}>
                 {Object.entries(analysisTypes).map(([key, val]) => (
@@ -565,14 +565,14 @@ export default function VarianceAnalysisTool() {
                     onClick={() => { setAnalysisType(key); setTypeDropdownOpen(false); setFiles([]); }}
                     style={{
                       width: "100%", padding: "14px 20px",
-                      background: analysisType === key ? "rgba(59,130,246,0.06)" : "transparent",
+                      background: analysisType === key ? "rgba(1,118,211,0.06)" : "transparent",
                       border: "none", borderBottom: `1px solid ${t.divider}`,
                       cursor: "pointer", fontFamily: "inherit",
                       display: "flex", alignItems: "center", gap: 12,
                       transition: "background 0.1s",
                     }}
-                    onMouseEnter={(e) => e.currentTarget.style.background = "rgba(59,130,246,0.08)"}
-                    onMouseLeave={(e) => e.currentTarget.style.background = analysisType === key ? "rgba(59,130,246,0.06)" : "transparent"}
+                    onMouseEnter={(e) => e.currentTarget.style.background = "rgba(1,118,211,0.08)"}
+                    onMouseLeave={(e) => e.currentTarget.style.background = analysisType === key ? "rgba(1,118,211,0.06)" : "transparent"}
                   >
                     <div style={{
                       width: 28, height: 28, borderRadius: 6,
@@ -662,7 +662,7 @@ export default function VarianceAnalysisTool() {
                       <div key={i} style={{
                         display: "flex", alignItems: "center", justifyContent: "space-between",
                         padding: "8px 14px", borderRadius: 7,
-                        background: "rgba(255,255,255,0.02)", border: `1px solid ${t.divider}`,
+                        background: "rgba(0,0,0,0.02)", border: `1px solid ${t.divider}`,
                       }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={t.textDim} strokeWidth="2" strokeLinecap="round">
@@ -772,7 +772,7 @@ export default function VarianceAnalysisTool() {
                 <div style={{ marginTop: 4 }}>
                   <div style={{
                     padding: "12px 16px", borderRadius: 8,
-                    background: "rgba(0,0,0,0.25)", border: `1px solid ${t.divider}`,
+                    background: "rgba(0,0,0,0.03)", border: `1px solid ${t.divider}`,
                     fontFamily: "'JetBrains Mono', monospace", fontSize: 14, fontWeight: 500,
                     color: t.accent, marginBottom: 14, letterSpacing: "0.02em",
                   }}>
@@ -787,7 +787,7 @@ export default function VarianceAnalysisTool() {
                       <div key={i} style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
                         <div style={{
                           width: 20, height: 20, borderRadius: 5, flexShrink: 0, marginTop: 1,
-                          background: "rgba(59,130,246,0.15)", border: `1px solid ${t.accentBorder}`,
+                          background: "rgba(1,118,211,0.12)", border: `1px solid ${t.accentBorder}`,
                           display: "flex", alignItems: "center", justifyContent: "center",
                           fontSize: 10, fontWeight: 700, color: t.accent, fontFamily: "'JetBrains Mono', monospace",
                         }}>{i + 1}</div>
@@ -814,7 +814,7 @@ export default function VarianceAnalysisTool() {
                           <th key={h} style={{
                             padding: "8px 12px", textAlign: "left", fontSize: 10, fontWeight: 600,
                             color: t.textDim, textTransform: "uppercase", letterSpacing: "0.06em",
-                            borderBottom: `1px solid ${t.divider}`, background: "rgba(0,0,0,0.2)",
+                            borderBottom: `1px solid ${t.divider}`, background: "rgba(0,0,0,0.02)",
                           }}>{h}</th>
                         ))}
                       </tr>
@@ -864,7 +864,7 @@ export default function VarianceAnalysisTool() {
                     {/* Architecture diagram */}
                     <div style={{
                       padding: "16px 20px", borderRadius: 8,
-                      background: "rgba(0,0,0,0.25)", border: `1px solid ${t.divider}`,
+                      background: "rgba(0,0,0,0.03)", border: `1px solid ${t.divider}`,
                     }}>
                       <div style={{ fontSize: 11, fontWeight: 600, color: t.textDim, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 12 }}>Data Flow Architecture</div>
                       <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 0, flexWrap: "wrap" }}>
@@ -885,7 +885,7 @@ export default function VarianceAnalysisTool() {
                           ) : (
                             <div key={i} style={{
                               padding: "10px 14px", borderRadius: 8, textAlign: "center", minWidth: 90,
-                              background: item.label === "PII Proxy" ? t.cyanDim : "rgba(255,255,255,0.03)",
+                              background: item.label === "PII Proxy" ? t.cyanDim : "rgba(0,0,0,0.025)",
                               border: `1px solid ${item.label === "PII Proxy" ? t.cyanBorder : t.divider}`,
                             }}>
                               <div style={{ fontSize: 18, marginBottom: 4 }}>{item.icon}</div>
@@ -923,7 +923,7 @@ export default function VarianceAnalysisTool() {
                       ].map((sec, i) => (
                         <div key={i} style={{
                           padding: "14px 16px", borderRadius: 8,
-                          background: "rgba(0,0,0,0.15)", border: `1px solid ${t.divider}`,
+                          background: "rgba(0,0,0,0.025)", border: `1px solid ${t.divider}`,
                         }}>
                           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
                             <span style={{ fontSize: 14 }}>{sec.icon}</span>
@@ -947,7 +947,7 @@ export default function VarianceAnalysisTool() {
                 padding: "14px",
                 borderRadius: 10,
                 border: "none",
-                background: hasFiles && !analyzing ? `linear-gradient(135deg, ${t.accent}, ${t.purple})` : t.cardBorder,
+                background: hasFiles && !analyzing ? `linear-gradient(135deg, #0176D3, #032D60)` : t.cardBorder,
                 color: hasFiles && !analyzing ? "#fff" : t.textMuted,
                 fontSize: 14,
                 fontWeight: 700,
@@ -955,7 +955,7 @@ export default function VarianceAnalysisTool() {
                 fontFamily: "inherit",
                 letterSpacing: "0.02em",
                 transition: "all 0.2s",
-                boxShadow: hasFiles && !analyzing ? "0 4px 24px rgba(59,130,246,0.25)" : "none",
+                boxShadow: hasFiles && !analyzing ? "0 4px 24px rgba(1,118,211,0.18)" : "none",
               }}
             >
               {analyzing ? "Analyzing..." : `Run ${currentType.label}${isMultiFile && files.length > 1 ? ` (${files.length} files)` : ""}`}
@@ -971,7 +971,7 @@ export default function VarianceAnalysisTool() {
                   <span style={{ fontSize: 12, fontWeight: 600, color: t.accent, fontFamily: "'JetBrains Mono', monospace" }}>{progress}%</span>
                 </div>
                 <div style={{ height: 4, borderRadius: 2, background: t.cardBorder }}>
-                  <div style={{ height: "100%", borderRadius: 2, background: `linear-gradient(90deg, ${t.accent}, ${t.purple})`, width: `${progress}%`, transition: "width 0.3s ease" }} />
+                  <div style={{ height: "100%", borderRadius: 2, background: `linear-gradient(90deg, #0176D3, #032D60)`, width: `${progress}%`, transition: "width 0.3s ease" }} />
                 </div>
               </div>
             )}
@@ -1044,7 +1044,7 @@ export default function VarianceAnalysisTool() {
                 <div style={{ marginTop: 4 }}>
                   <div style={{
                     padding: "10px 14px", borderRadius: 6,
-                    background: "rgba(0,0,0,0.25)", border: `1px solid ${t.divider}`,
+                    background: "rgba(0,0,0,0.03)", border: `1px solid ${t.divider}`,
                     fontFamily: "'JetBrains Mono', monospace", fontSize: 13, fontWeight: 500,
                     color: t.accent, marginBottom: 10,
                   }}>{resType.formula}</div>
@@ -1071,7 +1071,7 @@ export default function VarianceAnalysisTool() {
                     return (
                       <div key={i} style={{
                         display: "flex", alignItems: "center", gap: 12, padding: "8px 12px", borderRadius: 6,
-                        background: "rgba(0,0,0,0.15)", border: `1px solid ${t.divider}`,
+                        background: "rgba(0,0,0,0.025)", border: `1px solid ${t.divider}`,
                       }}>
                         <span style={{
                           fontSize: 10, padding: "3px 8px", borderRadius: 4, fontWeight: 700,
@@ -1199,7 +1199,7 @@ export default function VarianceAnalysisTool() {
                 <div style={{ padding: "16px 20px", borderBottom: `1px solid ${t.divider}`, display: "flex", alignItems: "center", gap: 8 }}>
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={t.green} strokeWidth="2" strokeLinecap="round"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
                   <span style={{ fontSize: 14, fontWeight: 700, color: t.white }}>Variance Commentary</span>
-                  <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 10, background: results.commentaryType === "ai" ? t.purpleDim : t.accentDim, border: `1px solid ${results.commentaryType === "ai" ? "rgba(139,92,246,0.25)" : t.accentBorder}`, color: results.commentaryType === "ai" ? t.purple : t.accent, fontWeight: 600 }}>
+                  <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 10, background: results.commentaryType === "ai" ? t.purpleDim : t.accentDim, border: `1px solid ${results.commentaryType === "ai" ? "rgba(123,97,255,0.22)" : t.accentBorder}`, color: results.commentaryType === "ai" ? t.purple : t.accent, fontWeight: 600 }}>
                     {results.commentaryType === "ai" ? "AI-Enhanced" : "Python Generated"}
                   </span>
                   {results.commentaryType === "ai" && (
@@ -1244,7 +1244,7 @@ export default function VarianceAnalysisTool() {
                   display: "inline-flex", alignItems: "center", gap: 6,
                   fontSize: 11, fontWeight: 500, color: t.textDim,
                   textDecoration: "none", padding: "5px 12px", borderRadius: 6,
-                  border: `1px solid ${t.divider}`, background: "rgba(255,255,255,0.02)",
+                  border: `1px solid ${t.divider}`, background: "rgba(0,0,0,0.02)",
                   transition: "all 0.15s",
                 }}
                 onMouseEnter={(e) => { e.currentTarget.style.borderColor = t.accentBorder; e.currentTarget.style.color = t.accent; }}
