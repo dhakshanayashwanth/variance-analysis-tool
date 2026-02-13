@@ -107,43 +107,33 @@ function processCSVData(rows, marketFilter) {
   return { categories, drivers, allRows: filtered };
 }
 
-// ─── Get Line Memos + Audit Trail for top 85% of variance in a category ───
-function getTop85WithAudit(drivers, categoryName) {
+// ─── Get Line Memos + Audit Trail from TOP driver per category ───
+function getTopDriverWithAudit(drivers, categoryName) {
   const catDrivers = drivers
     .filter((d) => d.category === categoryName)
     .sort((a, b) => Math.abs(b.variance) - Math.abs(a.variance));
 
-  const totalAbsVar = catDrivers.reduce((s, d) => s + Math.abs(d.variance), 0);
-  const threshold = totalAbsVar * 0.85;
-  let cumulative = 0;
-  const memos = [];
-  const auditDrivers = [];
+  if (catDrivers.length === 0) return { memos: [], audit: null };
 
-  for (const d of catDrivers) {
-    if (cumulative >= threshold) break;
-    cumulative += Math.abs(d.variance);
-    const driverMemos = d.memos.slice(0, 5);
-    memos.push(...driverMemos);
-    auditDrivers.push({
-      costCenter: d.costCenter,
-      supplier: d.supplier,
-      department: d.department,
-      variance: d.variance,
-      rowCount: d.rowCount,
-      memos: driverMemos,
-      cumulativePct: totalAbsVar > 0 ? (cumulative / totalAbsVar) * 100 : 0,
-    });
-  }
+  const topDriver = catDrivers[0];
+  const totalAbsVar = catDrivers.reduce((s, d) => s + Math.abs(d.variance), 0);
+  const driverPct = totalAbsVar > 0 ? (Math.abs(topDriver.variance) / totalAbsVar) * 100 : 0;
 
   return {
-    memos: memos.slice(0, 30),
+    memos: topDriver.memos,
     audit: {
       totalDrivers: catDrivers.length,
-      includedDrivers: auditDrivers.length,
       totalAbsVariance: totalAbsVar,
-      cumulativeCoverage: totalAbsVar > 0 ? (cumulative / totalAbsVar) * 100 : 0,
-      drivers: auditDrivers,
-      memoCount: Math.min(memos.length, 30),
+      driver: {
+        costCenter: topDriver.costCenter,
+        supplier: topDriver.supplier,
+        department: topDriver.department,
+        variance: topDriver.variance,
+        rowCount: topDriver.rowCount,
+        memos: topDriver.memos,
+        pctOfTotal: driverPct,
+      },
+      memoCount: topDriver.memos.length,
     },
   };
 }
@@ -179,7 +169,7 @@ async function enhanceWithAI(commentary, drivers) {
 
   for (let i = 0; i < enhanced.length; i++) {
     const item = enhanced[i];
-    const { memos, audit } = getTop85WithAudit(drivers, item.categoryName);
+    const { memos, audit } = getTopDriverWithAudit(drivers, item.categoryName);
     if (memos.length === 0) continue;
 
     const memoText = memos.map((m, idx) => `${idx + 1}. ${m}`).join("\n");
@@ -194,12 +184,12 @@ async function enhanceWithAI(commentary, drivers) {
           messages: [
             {
               role: "user",
-              content: `You are a senior finance analyst writing executive variance commentary. Below is a Python-generated factual sentence about a spend variance, followed by Line Memos from the top 85% of variance-driving rows for this category.
+              content: `You are a senior finance analyst writing executive variance commentary. Below is a Python-generated factual sentence about a spend variance, followed by Line Memos from the top variance driver for this category.
 
 PYTHON SENTENCE (DO NOT MODIFY THIS):
 "${item.pythonSentence}"
 
-LINE MEMOS FROM TOP VARIANCE ROWS:
+LINE MEMOS FROM TOP VARIANCE DRIVER:
 ${memoText}
 
 YOUR TASK:
@@ -337,7 +327,11 @@ function DriverGroup({ category, drivers, groupTotal }) {
 // ─── Audit Trail Dropdown for AI Commentary ───
 function AuditDropdown({ audit }) {
   const [open, setOpen] = useState(false);
+  const [memosOpen, setMemosOpen] = useState(false);
   if (!audit) return null;
+
+  const d = audit.driver;
+  const isUnfav = d.variance >= 0;
 
   return (
     <div style={{ marginTop: 10 }}>
@@ -346,7 +340,7 @@ function AuditDropdown({ audit }) {
         onMouseLeave={(e) => { e.currentTarget.style.borderColor = t.divider; e.currentTarget.style.color = t.textDim; }}>
         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
         <span>Audit Trail</span>
-        <span style={{ padding: "1px 5px", borderRadius: 3, background: t.accentDim, color: t.accent, fontSize: 10, fontWeight: 600 }}>{audit.includedDrivers} of {audit.totalDrivers} drivers · {audit.memoCount} memos</span>
+        <span style={{ padding: "1px 5px", borderRadius: 3, background: t.accentDim, color: t.accent, fontSize: 10, fontWeight: 600 }}>{d.costCenter} · {audit.memoCount} memo{audit.memoCount !== 1 ? "s" : ""}</span>
         <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" style={{ transition: "transform 0.2s", transform: open ? "rotate(180deg)" : "rotate(0deg)" }}><polyline points="6 9 12 15 18 9" /></svg>
       </button>
       {open && (
@@ -354,63 +348,54 @@ function AuditDropdown({ audit }) {
           {/* Summary bar */}
           <div style={{ padding: "10px 14px", background: t.headerBg, borderBottom: `1px solid ${t.divider}`, display: "flex", gap: 20, flexWrap: "wrap" }}>
             <div style={{ fontSize: 10, color: t.textDim }}>
-              <span style={{ fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.06em" }}>Coverage: </span>
-              <span style={{ fontWeight: 700, color: t.accent, fontFamily: "'JetBrains Mono', monospace" }}>{audit.cumulativeCoverage.toFixed(1)}%</span>
-              <span> of total absolute variance</span>
+              <span style={{ fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.06em" }}>Top Driver: </span>
+              <span style={{ fontWeight: 700, color: t.white }}>{d.costCenter}</span>
+              <span> via {d.supplier}</span>
             </div>
             <div style={{ fontSize: 10, color: t.textDim }}>
-              <span style={{ fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.06em" }}>Drivers included: </span>
-              <span style={{ fontWeight: 700, color: t.white }}>{audit.includedDrivers}</span>
-              <span> / {audit.totalDrivers}</span>
+              <span style={{ fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.06em" }}>Share of Category: </span>
+              <span style={{ fontWeight: 700, color: t.accent, fontFamily: "'JetBrains Mono', monospace" }}>{d.pctOfTotal.toFixed(1)}%</span>
             </div>
             <div style={{ fontSize: 10, color: t.textDim }}>
-              <span style={{ fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.06em" }}>Line Memos sent to LLM: </span>
+              <span style={{ fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.06em" }}>Rows: </span>
+              <span style={{ fontWeight: 700, color: t.white }}>{d.rowCount}</span>
+            </div>
+            <div style={{ fontSize: 10, color: t.textDim }}>
+              <span style={{ fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.06em" }}>Memos sent to LLM: </span>
               <span style={{ fontWeight: 700, color: t.white }}>{audit.memoCount}</span>
             </div>
           </div>
-          {/* Driver rows */}
-          {audit.drivers.map((d, i) => (
-            <AuditDriverRow key={i} driver={d} index={i} isLast={i === audit.drivers.length - 1} />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function AuditDriverRow({ driver, index, isLast }) {
-  const [memosOpen, setMemosOpen] = useState(false);
-  const isUnfav = driver.variance >= 0;
-
-  return (
-    <div style={{ borderBottom: isLast ? "none" : `1px solid ${t.divider}` }}>
-      <div style={{ padding: "10px 14px", display: "flex", alignItems: "center", justifyContent: "space-between", background: index % 2 === 0 ? "transparent" : "rgba(0,0,0,0.015)" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, flex: 1, minWidth: 0 }}>
-          <span style={{ fontSize: 10, fontWeight: 700, color: t.textMuted, fontFamily: "'JetBrains Mono', monospace", width: 18, textAlign: "right", flexShrink: 0 }}>#{index + 1}</span>
-          <span style={{ fontSize: 12, fontWeight: 600, color: t.white }}>{driver.costCenter}</span>
-          <span style={{ fontSize: 11, color: t.textDim }}>via {driver.supplier}</span>
-          {driver.department && <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 3, background: "rgba(0,0,0,0.04)", border: `1px solid ${t.divider}`, color: t.textDim }}>{driver.department}</span>}
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 12, flexShrink: 0 }}>
-          <span style={{ fontSize: 12, fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: isUnfav ? t.red : t.green }}>{fmtVar(driver.variance)}</span>
-          <span style={{ fontSize: 10, color: t.textDim, fontFamily: "'JetBrains Mono', monospace" }}>{driver.cumulativePct.toFixed(0)}%</span>
-          {driver.memos.length > 0 && (
-            <button onClick={() => setMemosOpen(!memosOpen)} style={{ padding: "2px 7px", borderRadius: 4, border: `1px solid ${t.divider}`, background: memosOpen ? t.accentDim : "transparent", color: memosOpen ? t.accent : t.textDim, fontSize: 10, fontWeight: 500, cursor: "pointer", fontFamily: "inherit", transition: "all 0.1s" }}>
-              {driver.memos.length} memo{driver.memos.length > 1 ? "s" : ""}
-            </button>
-          )}
-        </div>
-      </div>
-      {memosOpen && driver.memos.length > 0 && (
-        <div style={{ padding: "0 14px 10px 42px", animation: "fadeIn 0.15s ease" }}>
-          <div style={{ background: "rgba(0,0,0,0.02)", borderRadius: 6, border: `1px solid ${t.divider}`, padding: "8px 12px" }}>
-            {driver.memos.map((m, j) => (
-              <div key={j} style={{ fontSize: 11, lineHeight: 1.55, color: t.text, padding: "4px 0", borderBottom: j < driver.memos.length - 1 ? `1px solid rgba(0,0,0,0.04)` : "none" }}>
-                <span style={{ color: t.textMuted, fontFamily: "'JetBrains Mono', monospace", fontSize: 10, marginRight: 6 }}>→</span>
-                {m}
+          {/* Driver detail row */}
+          <div style={{ borderBottom: d.memos.length > 0 && memosOpen ? `1px solid ${t.divider}` : "none" }}>
+            <div style={{ padding: "10px 14px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, flex: 1, minWidth: 0 }}>
+                <span style={{ fontSize: 12, fontWeight: 600, color: t.white }}>{d.costCenter}</span>
+                <span style={{ fontSize: 11, color: t.textDim }}>via {d.supplier}</span>
+                {d.department && <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 3, background: "rgba(0,0,0,0.04)", border: `1px solid ${t.divider}`, color: t.textDim }}>{d.department}</span>}
               </div>
-            ))}
+              <div style={{ display: "flex", alignItems: "center", gap: 12, flexShrink: 0 }}>
+                <span style={{ fontSize: 12, fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: isUnfav ? t.red : t.green }}>{fmtVar(d.variance)}</span>
+                {d.memos.length > 0 && (
+                  <button onClick={() => setMemosOpen(!memosOpen)} style={{ padding: "3px 9px", borderRadius: 4, border: `1px solid ${memosOpen ? t.accentBorder : t.divider}`, background: memosOpen ? t.accentDim : "transparent", color: memosOpen ? t.accent : t.textDim, fontSize: 10, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", transition: "all 0.1s" }}>
+                    {memosOpen ? "Hide" : "Show"} {d.memos.length} memo{d.memos.length > 1 ? "s" : ""}
+                  </button>
+                )}
+              </div>
+            </div>
           </div>
+          {/* Memos */}
+          {memosOpen && d.memos.length > 0 && (
+            <div style={{ padding: "0 14px 12px 14px", animation: "fadeIn 0.15s ease" }}>
+              <div style={{ background: "rgba(0,0,0,0.02)", borderRadius: 6, border: `1px solid ${t.divider}`, padding: "8px 12px" }}>
+                {d.memos.map((m, j) => (
+                  <div key={j} style={{ fontSize: 11, lineHeight: 1.55, color: t.text, padding: "5px 0", borderBottom: j < d.memos.length - 1 ? `1px solid rgba(0,0,0,0.04)` : "none" }}>
+                    <span style={{ color: t.textMuted, fontFamily: "'JetBrains Mono', monospace", fontSize: 10, marginRight: 6 }}>→</span>
+                    {m}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
