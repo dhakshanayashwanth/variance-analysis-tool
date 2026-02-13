@@ -117,51 +117,61 @@ const generateDrivers = (marketFilter) => {
 const generateCommentary = (numComments, commentaryType, marketFilter, categories) => {
   if (commentaryType === "none") return [];
 
+  const drivers = generateDrivers(marketFilter);
   const sorted = [...categories].sort((a, b) => Math.abs(b.variance) - Math.abs(a.variance));
 
+  // Find top driver for a given category (by absolute variance)
+  const topDriver = (catName) => {
+    const catDrivers = drivers
+      .filter((d) => d.category === catName)
+      .sort((a, b) => Math.abs(b.variance) - Math.abs(a.variance));
+    return catDrivers[0] || null;
+  };
+
   const commentaryMap = {
-    "Media Spend": (v) => ({
+    "Media Spend": (v, td) => ({
       title: "Media Spend Over-Index",
-      body: `Total media spend increased ${fmtVar(v)} vs. prior period, driven primarily by US Performance Marketing and US Brand Marketing. The increase is attributable to incremental paid search investment during Q2 hiring campaigns and expanded brand awareness initiatives. Recommend reviewing ROI thresholds for campaigns exceeding $500K monthly burn rate.`,
-      severity: "high",
+      body: `Total media spend ${v >= 0 ? "increased" : "decreased"} ${fmtVar(v)} vs. prior period, driven primarily by ${td.costCenter} (${fmtVar(td.variance)} via ${td.supplier}). The increase is attributable to incremental paid search investment during Q2 hiring campaigns and expanded brand awareness initiatives. Recommend reviewing ROI thresholds for campaigns exceeding $500K monthly burn rate.`,
+      severity: v >= 0 ? "high" : "favorable",
     }),
-    "Professional Services": (v) => ({
+    "Professional Services": (v, td) => ({
       title: "Professional Services Escalation",
-      body: `Professional services spend exceeded plan by ${fmt(Math.abs(v))}, concentrated in Strategy Consulting (McKinsey engagement for market entry analysis) and contract staffing through Insight Global. The staffing increase correlates with Q2 engineering sprint acceleration. Engagement scoping and vendor rate card review recommended for Q3.`,
+      body: `Professional services spend ${v >= 0 ? "exceeded plan" : "came in under plan"} by ${fmt(Math.abs(v))}, driven primarily by ${td.costCenter} (${fmtVar(td.variance)} via ${td.supplier}). The variance correlates with Q2 engineering sprint acceleration and expanded consulting engagements. Engagement scoping and vendor rate card review recommended for Q3.`,
       severity: v >= 0 ? "high" : "favorable",
     }),
-    "Technology": (v) => ({
+    "Technology": (v, td) => ({
       title: "Technology Infrastructure Growth",
-      body: `Cloud infrastructure and SaaS licensing drove a combined ${fmt(Math.abs(v))} unfavorable variance. AWS consumption grew 14% MoM due to data pipeline scaling, while Snowflake costs expanded from increased query volume tied to new ML forecasting workloads. Recommend conducting cloud cost optimization review with Infrastructure team.`,
+      body: `Technology spend ${v >= 0 ? "increased" : "decreased"} ${fmtVar(v)} vs. prior period, driven primarily by ${td.costCenter} (${fmtVar(td.variance)} via ${td.supplier}). Consumption growth is tied to data pipeline scaling and increased query volume from new ML forecasting workloads. Recommend conducting cloud cost optimization review with Infrastructure team.`,
       severity: v >= 0 ? "high" : "favorable",
     }),
-    "Personnel": (v) => ({
+    "Personnel": (v, td) => ({
       title: "Personnel Savings from Attrition",
-      body: `Personnel costs ${v < 0 ? "decreased" : "increased"} ${fmt(Math.abs(v))} due to natural attrition in Sales - Mid Market and Customer Success teams. Open headcount backfills are in progress but lag 45-60 days behind departures, creating temporary P&L favorability. Engineering - Platform also contributing from delayed contractor conversions.`,
+      body: `Personnel costs ${v < 0 ? "decreased" : "increased"} ${fmt(Math.abs(v))}, driven primarily by ${td.costCenter} (${fmtVar(td.variance)}). Open headcount backfills are in progress but lag 45-60 days behind departures, creating temporary P&L favorability. Recommend monitoring backfill pipeline and conversion timelines.`,
       severity: v < 0 ? "favorable" : "high",
     }),
-    "Travel & Events": (v) => ({
+    "Travel & Events": (v, td) => ({
       title: "Travel & Events Normalization",
-      body: `T&E variance of ${fmtVar(v)} reflects return-to-office travel patterns and Sales Enablement regional meetings. Executive travel contributed a notable portion of the increase. While elevated vs. prior period, spend remains 22% below FY23 pre-normalization levels. Suggest monitoring monthly run-rate against updated FY25 T&E budget.`,
+      body: `T&E variance of ${fmtVar(v)} vs. prior period, driven primarily by ${td.costCenter} (${fmtVar(td.variance)} via ${td.supplier}). While elevated vs. prior period, spend remains 22% below FY23 pre-normalization levels. Suggest monitoring monthly run-rate against updated FY25 T&E budget.`,
       severity: "medium",
     }),
-    "Facilities": (v) => ({
+    "Facilities": (v, td) => ({
       title: "Facilities Cost Reduction",
-      body: `Facilities spend came in ${fmt(Math.abs(v))} ${v < 0 ? "under" : "over"} plan, driven by lease renegotiations and space consolidation efforts. ${v < 0 ? "This represents a favorable offset to other cost increases." : "Recommend reviewing upcoming lease renewals."}`,
+      body: `Facilities spend came in ${fmt(Math.abs(v))} ${v < 0 ? "under" : "over"} plan, driven primarily by ${td.costCenter} (${fmtVar(td.variance)} via ${td.supplier}). ${v < 0 ? "This represents a favorable offset to other cost increases." : "Recommend reviewing upcoming lease renewals."}`,
       severity: v < 0 ? "favorable" : "medium",
     }),
-    "Other OpEx": (v) => ({
+    "Other OpEx": (v, td) => ({
       title: "Other OpEx Variance",
-      body: `Other operating expenses showed a ${fmtVar(v)} variance, primarily driven by Legal & Compliance spend on external counsel. Recommend reviewing engagement scope and rate cards for outside legal services.`,
+      body: `Other operating expenses showed a ${fmtVar(v)} variance, driven primarily by ${td.costCenter} (${fmtVar(td.variance)} via ${td.supplier}). Recommend reviewing engagement scope and rate cards for outside services.`,
       severity: v >= 0 ? "medium" : "favorable",
     }),
   };
 
   const comments = sorted
-    .filter((c) => commentaryMap[c.name])
+    .filter((c) => commentaryMap[c.name] && topDriver(c.name))
     .slice(0, numComments)
     .map((c) => {
-      const gen = commentaryMap[c.name](c.variance);
+      const td = topDriver(c.name);
+      const gen = commentaryMap[c.name](c.variance, td);
       return {
         ...gen,
         type: commentaryType === "ai" ? "Python + AI Generated" : "Python Generated",
@@ -1260,3 +1270,4 @@ export default function VarianceAnalysisTool() {
     </div>
   );
 }
+
