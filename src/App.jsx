@@ -10,7 +10,7 @@ import * as Papa from "papaparse";
 // ─── Analysis Type Definitions ───
 const analysisTypes = {
   accounting: {
-    label: "Accounting Variance",
+    label: "Accounting (General Spend)",
     description: "Compares actual spend against budgeted/standard costs using GAAP-aligned cost accounting methodology. Single file input.",
     formula: "Variance = Actual Cost − Budgeted (Standard) Cost",
     interpretation: "A positive variance indicates over-budget (unfavorable); a negative variance indicates under-budget (favorable).",
@@ -30,7 +30,7 @@ const analysisTypes = {
     ],
   },
   finance: {
-    label: "Financial Variance (MoM)",
+    label: "Finance (Marketing Spend)",
     description: "Month-over-month trend analysis comparing up to 5 periods of spend data for operational insight.",
     formula: "Variance = Current Month Actual − Prior Month Actual",
     interpretation: "Identifies spend trajectory and anomalies. Positive = spend increase; Negative = spend decrease.",
