@@ -175,7 +175,7 @@ async function enhanceWithAI(commentary, drivers) {
     const memoText = memos.map((m, idx) => `${idx + 1}. ${m}`).join("\n");
 
     try {
-      const response = await fetch("https://api.anthropic.com/v1/messages", {
+      const response = await fetch("/api/enhance", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
