@@ -62,13 +62,15 @@ function processCSVData(rows, marketFilter) {
   const parseNum = (s) => parseFloat((s || "0").replace(/,/g, "")) || 0;
 
   // ── Determine the two most recent months from the Date column ──
+  // NOTE: We parse the date string directly (not via new Date()) to avoid
+  // JS timezone bugs where e.g. "2025-08-01" becomes Jul 31 in US timezones.
   const monthSet = new Set();
   filtered.forEach((r) => {
-    const d = r["Date"];
+    const d = (r["Date"] || "").trim();
     if (!d) return;
-    const parsed = new Date(d);
-    if (!isNaN(parsed)) {
-      const ym = parsed.getFullYear() + "-" + String(parsed.getMonth() + 1).padStart(2, "0");
+    const parts = d.split("-");
+    if (parts.length >= 2) {
+      const ym = parts[0] + "-" + parts[1];
       monthSet.add(ym);
     }
   });
@@ -77,11 +79,11 @@ function processCSVData(rows, marketFilter) {
   const priorMonth = sortedMonths[sortedMonths.length - 2] || "";
 
   const getRowMonth = (r) => {
-    const d = r["Date"];
+    const d = (r["Date"] || "").trim();
     if (!d) return "";
-    const parsed = new Date(d);
-    if (isNaN(parsed)) return "";
-    return parsed.getFullYear() + "-" + String(parsed.getMonth() + 1).padStart(2, "0");
+    const parts = d.split("-");
+    if (parts.length >= 2) return parts[0] + "-" + parts[1];
+    return "";
   };
 
   // ── Aggregate by Spend Category, split by month ──
@@ -813,6 +815,21 @@ export default function VarianceAnalysisTool() {
                       </td>
                     </tr>
                   ))}
+                  {(() => {
+                    const totP = results.categories.reduce((s, c) => s + c.prior, 0);
+                    const totC = results.categories.reduce((s, c) => s + c.current, 0);
+                    const totV = results.categories.reduce((s, c) => s + c.variance, 0);
+                    const fmtM = (n) => "$" + (n / 1e6).toFixed(1) + "M";
+                    return (
+                      <tr style={{ background: t.headerBg }}>
+                        <td style={{ padding: "12px 14px", fontSize: 13, fontWeight: 700, color: t.white, borderTop: "2px solid " + t.accent }}>Total</td>
+                        <td style={{ padding: "12px 14px", textAlign: "right", fontFamily: "'JetBrains Mono', monospace", fontSize: 13, fontWeight: 700, color: t.white, borderTop: "2px solid " + t.accent }}>{fmtM(totP)}</td>
+                        <td style={{ padding: "12px 14px", textAlign: "right", fontFamily: "'JetBrains Mono', monospace", fontSize: 13, fontWeight: 700, color: t.accent, borderTop: "2px solid " + t.accent }}>{fmtM(totC)}</td>
+                        <td style={{ padding: "12px 14px", textAlign: "right", fontFamily: "'JetBrains Mono', monospace", fontSize: 13, fontWeight: 700, color: varColor(totV), borderTop: "2px solid " + t.accent }}>{fmtVar(totV)}</td>
+                        <td style={{ padding: "12px 14px", borderTop: "2px solid " + t.accent }}></td>
+                      </tr>
+                    );
+                  })()}
                 </tbody>
               </table>
             </div>
@@ -842,6 +859,15 @@ export default function VarianceAnalysisTool() {
                     .map(([category, drvs]) => (
                       <DriverGroup key={category} category={category} drivers={drvs} groupTotal={drvs.reduce((s, x) => s + x.variance, 0)} />
                     ));
+                })()}
+                {(() => {
+                  const totalVar = results.drivers.reduce((s, d) => s + d.variance, 0);
+                  return (
+                    <div style={{ padding: "14px 18px", background: t.headerBg, borderTop: "2px solid " + t.accent, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                      <span style={{ fontSize: 14, fontWeight: 700, color: t.white }}>Total</span>
+                      <span style={{ fontSize: 14, fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: totalVar >= 0 ? t.red : t.green }}>{fmtVar(totalVar)}</span>
+                    </div>
+                  );
                 })()}
               </div>
             </div>
