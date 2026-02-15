@@ -11,22 +11,22 @@ import * as Papa from "papaparse";
 const analysisTypes = {
   accounting: {
     label: "Accounting (General Spend)",
-    description: "Compares actual spend against budgeted/standard costs using GAAP-aligned cost accounting methodology. Single file input.",
-    formula: "Variance = Actual Cost − Budgeted (Standard) Cost",
-    interpretation: "A positive variance indicates over-budget (unfavorable); a negative variance indicates under-budget (favorable).",
+    description: "Compares current month spend against prior month using GAAP-aligned cost accounting methodology. Single file input.",
+    formula: "Variance = Current Month Cost − Prior Month Cost",
+    interpretation: "A positive variance indicates spend increase (unfavorable); a negative variance indicates spend decrease (favorable).",
     thresholds: [
       { range: "± 0–2%", label: "Immaterial", action: "No action required. Within normal operating tolerance." },
       { range: "± 2–5%", label: "Notable", action: "Flag for review during month-end close. Include in management commentary." },
       { range: "± 5–10%", label: "Significant", action: "Requires cost center owner explanation and corrective action plan." },
       { range: "> ±10%", label: "Critical", action: "Escalate to Finance Director. Mandatory variance memo and reforecast." },
     ],
-    priorLabel: "Budget / Standard",
-    currentLabel: "Actual",
+    priorLabel: "Prior Month",
+    currentLabel: "Current Month",
     methodology: [
-      "Line-item comparison of actual GL postings against approved budget at the cost center level.",
+      "Line-item comparison of current month GL postings against prior month at the cost center level.",
       "Variances decomposed into Price Variance (rate differential) and Volume Variance (quantity differential) where applicable.",
       "Accrual adjustments applied for timing differences (e.g., invoices received but not yet posted).",
-      "FX impact isolated for multi-currency cost centers using budget vs. actual exchange rates.",
+      "FX impact isolated for multi-currency cost centers using prior vs. current month exchange rates.",
     ],
   },
   finance: {
