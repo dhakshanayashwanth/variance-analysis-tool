@@ -51,7 +51,7 @@ const analysisTypes = {
   },
 };
 
-// ─── CSV Data Processing ───
+// ─── CSV Data Processing (FIXED: splits by month using Date column) ───
 function processCSVData(rows, marketFilter) {
   const filtered = marketFilter === "All" ? rows : rows.filter((r) => {
     if (marketFilter === "JP") return r.Market === "APAC";
@@ -61,50 +61,86 @@ function processCSVData(rows, marketFilter) {
 
   const parseNum = (s) => parseFloat((s || "0").replace(/,/g, "")) || 0;
 
-  // Aggregate by Spend Category
+  // ── Determine the two most recent months from the Date column ──
+  const monthSet = new Set();
+  filtered.forEach((r) => {
+    const d = r["Date"];
+    if (!d) return;
+    const parsed = new Date(d);
+    if (!isNaN(parsed)) {
+      const ym = parsed.getFullYear() + "-" + String(parsed.getMonth() + 1).padStart(2, "0");
+      monthSet.add(ym);
+    }
+  });
+  const sortedMonths = [...monthSet].sort(); // chronological
+  const currentMonth = sortedMonths[sortedMonths.length - 1] || "";
+  const priorMonth = sortedMonths[sortedMonths.length - 2] || "";
+
+  const getRowMonth = (r) => {
+    const d = r["Date"];
+    if (!d) return "";
+    const parsed = new Date(d);
+    if (isNaN(parsed)) return "";
+    return parsed.getFullYear() + "-" + String(parsed.getMonth() + 1).padStart(2, "0");
+  };
+
+  // ── Aggregate by Spend Category, split by month ──
   const catMap = {};
   filtered.forEach((r) => {
     const cat = r["Spend Category"];
     if (!cat) return;
-    if (!catMap[cat]) catMap[cat] = { name: cat, totalAmount: 0, totalVariance: 0, rowCount: 0 };
-    catMap[cat].totalAmount += parseNum(r["Amount"]);
-    catMap[cat].totalVariance += parseNum(r["Variance Amount"]);
-    catMap[cat].rowCount += 1;
+    const ym = getRowMonth(r);
+    if (ym !== currentMonth && ym !== priorMonth) return; // skip rows outside the two months
+    if (!catMap[cat]) catMap[cat] = { name: cat, priorAmount: 0, currentAmount: 0, priorRows: 0, currentRows: 0 };
+    const amt = parseNum(r["Amount"]);
+    if (ym === currentMonth) {
+      catMap[cat].currentAmount += amt;
+      catMap[cat].currentRows += 1;
+    } else if (ym === priorMonth) {
+      catMap[cat].priorAmount += amt;
+      catMap[cat].priorRows += 1;
+    }
   });
 
   const categories = Object.values(catMap).map((c) => {
-    const prior = c.totalAmount - c.totalVariance;
+    const variance = c.currentAmount - c.priorAmount;
     return {
       name: c.name,
-      prior: Math.round(prior),
-      current: Math.round(c.totalAmount),
-      variance: Math.round(c.totalVariance),
-      variancePct: prior !== 0 ? (c.totalVariance / prior) * 100 : 0,
-      rowCount: c.rowCount,
+      prior: Math.round(c.priorAmount),
+      current: Math.round(c.currentAmount),
+      variance: Math.round(variance),
+      variancePct: c.priorAmount !== 0 ? (variance / c.priorAmount) * 100 : 0,
+      rowCount: c.priorRows + c.currentRows,
     };
   });
 
-  // Aggregate drivers: group by (Spend Category, Cost Center, Supplier)
+  // ── Aggregate drivers: group by (Spend Category, Cost Center/Market, Supplier/Memo) ──
   const driverMap = {};
   filtered.forEach((r) => {
     const cat = r["Spend Category"];
-    const cc = r["Cost Center"];
-    const sup = r["Supplier"];
-    const dept = r["Department"];
-    if (!cat || !cc) return;
-    const key = `${cat}||${cc}||${sup}`;
-    if (!driverMap[key]) driverMap[key] = { category: cat, costCenter: cc, supplier: sup, department: dept, variance: 0, rowCount: 0, memos: [] };
-    const varAmt = parseNum(r["Variance Amount"]);
-    driverMap[key].variance += varAmt;
+    const cc = r["Cost Center"] || r["Market"] || "Unknown";
+    const sup = r["Supplier"] || r["Line Memo"] || "Unknown";
+    const dept = r["Department"] || "";
+    if (!cat) return;
+    const ym = getRowMonth(r);
+    if (ym !== currentMonth && ym !== priorMonth) return;
+    const key = cat + "||" + cc + "||" + sup;
+    if (!driverMap[key]) driverMap[key] = { category: cat, costCenter: cc, supplier: sup, department: dept, priorAmount: 0, currentAmount: 0, rowCount: 0, memos: [] };
+    const amt = parseNum(r["Amount"]);
+    if (ym === currentMonth) driverMap[key].currentAmount += amt;
+    else if (ym === priorMonth) driverMap[key].priorAmount += amt;
     driverMap[key].rowCount += 1;
     if (r["Line Memo"]) driverMap[key].memos.push(r["Line Memo"]);
   });
 
   const drivers = Object.values(driverMap)
-    .map((d) => ({ ...d, variance: Math.round(d.variance) }))
+    .map((d) => {
+      const variance = Math.round(d.currentAmount - d.priorAmount);
+      return { ...d, variance };
+    })
     .sort((a, b) => Math.abs(b.variance) - Math.abs(a.variance));
 
-  return { categories, drivers, allRows: filtered };
+  return { categories, drivers, allRows: filtered, currentMonth, priorMonth };
 }
 
 // ─── Get Line Memos + Audit Trail from TOP driver per category ───
@@ -150,10 +186,10 @@ function generatePythonCommentary(categories, drivers) {
     if (!top) return null;
 
     const direction = cat.variance >= 0 ? "increased" : "decreased";
-    const body = `${cat.name} spend ${direction} ${fmtVar(cat.variance)} vs. prior period, driven primarily by ${top.costCenter} (${fmtVar(top.variance)} via ${top.supplier}).`;
+    const body = cat.name + " spend " + direction + " " + fmtVar(cat.variance) + " vs. prior period, driven primarily by " + top.costCenter + " (" + fmtVar(top.variance) + " via " + top.supplier + ").";
 
     return {
-      title: `${cat.name} Variance`,
+      title: cat.name + " Variance",
       pythonSentence: body,
       aiEnhancement: null,
       severity: cat.variance >= 0 ? "high" : "favorable",
@@ -172,7 +208,7 @@ async function enhanceWithAI(commentary, drivers) {
     const { memos, audit } = getTopDriverWithAudit(drivers, item.categoryName);
     if (memos.length === 0) continue;
 
-    const memoText = memos.map((m, idx) => `${idx + 1}. ${m}`).join("\n");
+    const memoText = memos.map((m, idx) => (idx + 1) + ". " + m).join("\n");
 
     try {
       const response = await fetch("/api/enhance", {
@@ -184,16 +220,7 @@ async function enhanceWithAI(commentary, drivers) {
           messages: [
             {
               role: "user",
-              content: `You are a senior finance analyst writing executive variance commentary. Below is a Python-generated factual sentence about a spend variance, followed by Line Memos from the top variance driver for this category.
-
-PYTHON SENTENCE (DO NOT MODIFY THIS):
-"${item.pythonSentence}"
-
-LINE MEMOS FROM TOP VARIANCE DRIVER:
-${memoText}
-
-YOUR TASK:
-Write 1-2 additional sentences that provide executive-level context based ONLY on patterns you see in the Line Memos. Focus on: what types of spend are driving the variance (renewals, consulting engagements, cloud costs, travel patterns, etc.), which departments appear most, and any notable patterns (reclassifications, intercompany charges, scope changes). Be specific but concise. Do NOT repeat the Python sentence. Do NOT include dollar amounts. Write in a professional finance tone.`,
+              content: "You are a senior finance analyst writing executive variance commentary. Below is a Python-generated factual sentence about a spend variance, followed by Line Memos from the top variance driver for this category.\n\nPYTHON SENTENCE (DO NOT MODIFY THIS):\n\"" + item.pythonSentence + "\"\n\nLINE MEMOS FROM TOP VARIANCE DRIVER:\n" + memoText + "\n\nYOUR TASK:\nWrite 1-2 additional sentences that provide executive-level context based ONLY on patterns you see in the Line Memos. Focus on: what types of spend are driving the variance (renewals, consulting engagements, cloud costs, travel patterns, etc.), which departments appear most, and any notable patterns (reclassifications, intercompany charges, scope changes). Be specific but concise. Do NOT repeat the Python sentence. Do NOT include dollar amounts. Write in a professional finance tone.",
             },
           ],
         }),
@@ -206,7 +233,6 @@ Write 1-2 additional sentences that provide executive-level context based ONLY o
       }
     } catch (err) {
       console.error("AI enhancement failed for", item.categoryName, err);
-      // Fallback: keep Python-only
     }
   }
 
@@ -215,18 +241,18 @@ Write 1-2 additional sentences that provide executive-level context based ONLY o
 
 // ─── Formatters ───
 const fmt = (n) => {
-  if (Math.abs(n) >= 1e6) return `$${(n / 1e6).toFixed(1)}M`;
-  if (Math.abs(n) >= 1e3) return `$${(n / 1e3).toFixed(0)}K`;
-  return `$${n.toLocaleString()}`;
+  if (Math.abs(n) >= 1e6) return "$" + (n / 1e6).toFixed(1) + "M";
+  if (Math.abs(n) >= 1e3) return "$" + (n / 1e3).toFixed(0) + "K";
+  return "$" + n.toLocaleString();
 };
-const fmtFull = (n) => `$${n.toLocaleString()}`;
+const fmtFull = (n) => "$" + n.toLocaleString();
 const fmtVar = (n) => {
   const prefix = n >= 0 ? "+" : "";
-  if (Math.abs(n) >= 1e6) return `${prefix}$${(n / 1e6).toFixed(1)}M`;
-  if (Math.abs(n) >= 1e3) return `${prefix}$${(n / 1e3).toFixed(0)}K`;
-  return `${prefix}$${n.toLocaleString()}`;
+  if (Math.abs(n) >= 1e6) return prefix + "$" + (n / 1e6).toFixed(1) + "M";
+  if (Math.abs(n) >= 1e3) return prefix + "$" + (n / 1e3).toFixed(0) + "K";
+  return prefix + "$" + n.toLocaleString();
 };
-const fmtPct = (n) => `${n >= 0 ? "+" : ""}${n.toFixed(1)}%`;
+const fmtPct = (n) => (n >= 0 ? "+" : "") + n.toFixed(1) + "%";
 
 // ─── Colors & Theme (Salesforce Lightning-aligned) ───
 const t = {
@@ -245,7 +271,7 @@ const t = {
 function InfoDropdown({ icon, title, color, borderColor, bgColor, children }) {
   const [open, setOpen] = useState(false);
   return (
-    <div style={{ background: t.card, border: `1px solid ${open ? borderColor : t.cardBorder}`, borderRadius: 10, overflow: "hidden", transition: "border-color 0.2s" }}>
+    <div style={{ background: t.card, border: "1px solid " + (open ? borderColor : t.cardBorder), borderRadius: 10, overflow: "hidden", transition: "border-color 0.2s" }}>
       <button onClick={() => setOpen(!open)} style={{ width: "100%", padding: "14px 20px", background: open ? bgColor : "transparent", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between", fontFamily: "inherit", transition: "background 0.15s" }}
         onMouseEnter={(e) => { if (!open) e.currentTarget.style.background = "rgba(0,0,0,0.02)"; }}
         onMouseLeave={(e) => { if (!open) e.currentTarget.style.background = "transparent"; }}>
@@ -267,7 +293,7 @@ function DriverCostCenter({ costCenter, supplier, variance, department }) {
   const [open, setOpen] = useState(false);
   const isUnfavorable = variance >= 0;
   return (
-    <div style={{ borderBottom: `1px solid ${t.divider}` }}>
+    <div style={{ borderBottom: "1px solid " + t.divider }}>
       <button onClick={() => setOpen(!open)} style={{ width: "100%", padding: "10px 14px 10px 32px", background: "transparent", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between", fontFamily: "inherit", transition: "background 0.1s" }}
         onMouseEnter={(e) => e.currentTarget.style.background = t.rowHover} onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -278,7 +304,7 @@ function DriverCostCenter({ costCenter, supplier, variance, department }) {
       </button>
       {open && (
         <div style={{ padding: "0 14px 14px 56px", animation: "fadeIn 0.15s ease" }}>
-          <div style={{ background: "rgba(0,0,0,0.02)", borderRadius: 8, border: `1px solid ${t.divider}`, padding: "14px 18px" }}>
+          <div style={{ background: "rgba(0,0,0,0.02)", borderRadius: 8, border: "1px solid " + t.divider, padding: "14px 18px" }}>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 12 }}>
               <div>
                 <div style={{ fontSize: 10, fontWeight: 600, color: t.textDim, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>Supplier</div>
@@ -292,11 +318,11 @@ function DriverCostCenter({ costCenter, supplier, variance, department }) {
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
               <div>
                 <div style={{ fontSize: 10, fontWeight: 600, color: t.textDim, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>Department</div>
-                <div style={{ fontSize: 13, color: t.white, fontWeight: 500 }}>{department || "—"}</div>
+                <div style={{ fontSize: 13, color: t.white, fontWeight: 500 }}>{department || "\u2014"}</div>
               </div>
               <div>
                 <div style={{ fontSize: 10, fontWeight: 600, color: t.textDim, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>Direction</div>
-                <span style={{ fontSize: 10, padding: "3px 8px", borderRadius: 4, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em", background: isUnfavorable ? t.redDim : t.greenDim, color: isUnfavorable ? t.red : t.green, border: `1px solid ${isUnfavorable ? t.redBorder : t.greenBorder}` }}>{isUnfavorable ? "Unfavorable" : "Favorable"}</span>
+                <span style={{ fontSize: 10, padding: "3px 8px", borderRadius: 4, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em", background: isUnfavorable ? t.redDim : t.greenDim, color: isUnfavorable ? t.red : t.green, border: "1px solid " + (isUnfavorable ? t.redBorder : t.greenBorder) }}>{isUnfavorable ? "Unfavorable" : "Favorable"}</span>
               </div>
             </div>
           </div>
@@ -309,13 +335,13 @@ function DriverCostCenter({ costCenter, supplier, variance, department }) {
 function DriverGroup({ category, drivers, groupTotal }) {
   const [open, setOpen] = useState(false);
   return (
-    <div style={{ borderBottom: `1px solid ${t.divider}` }}>
+    <div style={{ borderBottom: "1px solid " + t.divider }}>
       <button onClick={() => setOpen(!open)} style={{ width: "100%", padding: "14px 18px", background: "rgba(1,118,211,0.04)", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between", fontFamily: "inherit", transition: "background 0.1s" }}
         onMouseEnter={(e) => e.currentTarget.style.background = "rgba(1,118,211,0.08)"} onMouseLeave={(e) => e.currentTarget.style.background = "rgba(1,118,211,0.04)"}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={t.accent} strokeWidth="2.5" strokeLinecap="round" style={{ transition: "transform 0.2s", transform: open ? "rotate(90deg)" : "rotate(0deg)" }}><polyline points="9 18 15 12 9 6" /></svg>
           <span style={{ fontSize: 14, fontWeight: 700, color: t.white }}>{category}</span>
-          <span style={{ fontSize: 10, padding: "2px 7px", borderRadius: 10, background: t.accentDim, border: `1px solid ${t.accentBorder}`, color: t.accent, fontWeight: 600 }}>{drivers.length}</span>
+          <span style={{ fontSize: 10, padding: "2px 7px", borderRadius: 10, background: t.accentDim, border: "1px solid " + t.accentBorder, color: t.accent, fontWeight: 600 }}>{drivers.length}</span>
         </div>
         <span style={{ fontSize: 13, fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: groupTotal >= 0 ? t.red : t.green }}>{fmtVar(groupTotal)}</span>
       </button>
@@ -335,18 +361,17 @@ function AuditDropdown({ audit }) {
 
   return (
     <div style={{ marginTop: 10 }}>
-      <button onClick={() => setOpen(!open)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 10px", borderRadius: 6, border: `1px solid ${t.divider}`, background: "transparent", cursor: "pointer", fontFamily: "inherit", fontSize: 11, fontWeight: 500, color: t.textDim, transition: "all 0.15s" }}
+      <button onClick={() => setOpen(!open)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 10px", borderRadius: 6, border: "1px solid " + t.divider, background: "transparent", cursor: "pointer", fontFamily: "inherit", fontSize: 11, fontWeight: 500, color: t.textDim, transition: "all 0.15s" }}
         onMouseEnter={(e) => { e.currentTarget.style.borderColor = t.accentBorder; e.currentTarget.style.color = t.accent; }}
         onMouseLeave={(e) => { e.currentTarget.style.borderColor = t.divider; e.currentTarget.style.color = t.textDim; }}>
         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
         <span>Audit Trail</span>
-        <span style={{ padding: "1px 5px", borderRadius: 3, background: t.accentDim, color: t.accent, fontSize: 10, fontWeight: 600 }}>{d.costCenter} · {audit.memoCount} memo{audit.memoCount !== 1 ? "s" : ""}</span>
+        <span style={{ padding: "1px 5px", borderRadius: 3, background: t.accentDim, color: t.accent, fontSize: 10, fontWeight: 600 }}>{d.costCenter} &middot; {audit.memoCount} memo{audit.memoCount !== 1 ? "s" : ""}</span>
         <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" style={{ transition: "transform 0.2s", transform: open ? "rotate(180deg)" : "rotate(0deg)" }}><polyline points="6 9 12 15 18 9" /></svg>
       </button>
       {open && (
-        <div style={{ marginTop: 8, borderRadius: 8, border: `1px solid ${t.divider}`, overflow: "hidden", animation: "fadeIn 0.15s ease" }}>
-          {/* Summary bar */}
-          <div style={{ padding: "10px 14px", background: t.headerBg, borderBottom: `1px solid ${t.divider}`, display: "flex", gap: 20, flexWrap: "wrap" }}>
+        <div style={{ marginTop: 8, borderRadius: 8, border: "1px solid " + t.divider, overflow: "hidden", animation: "fadeIn 0.15s ease" }}>
+          <div style={{ padding: "10px 14px", background: t.headerBg, borderBottom: "1px solid " + t.divider, display: "flex", gap: 20, flexWrap: "wrap" }}>
             <div style={{ fontSize: 10, color: t.textDim }}>
               <span style={{ fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.06em" }}>Top Driver: </span>
               <span style={{ fontWeight: 700, color: t.white }}>{d.costCenter}</span>
@@ -365,31 +390,29 @@ function AuditDropdown({ audit }) {
               <span style={{ fontWeight: 700, color: t.white }}>{audit.memoCount}</span>
             </div>
           </div>
-          {/* Driver detail row */}
-          <div style={{ borderBottom: d.memos.length > 0 && memosOpen ? `1px solid ${t.divider}` : "none" }}>
+          <div style={{ borderBottom: d.memos.length > 0 && memosOpen ? "1px solid " + t.divider : "none" }}>
             <div style={{ padding: "10px 14px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 10, flex: 1, minWidth: 0 }}>
                 <span style={{ fontSize: 12, fontWeight: 600, color: t.white }}>{d.costCenter}</span>
                 <span style={{ fontSize: 11, color: t.textDim }}>via {d.supplier}</span>
-                {d.department && <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 3, background: "rgba(0,0,0,0.04)", border: `1px solid ${t.divider}`, color: t.textDim }}>{d.department}</span>}
+                {d.department && <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 3, background: "rgba(0,0,0,0.04)", border: "1px solid " + t.divider, color: t.textDim }}>{d.department}</span>}
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 12, flexShrink: 0 }}>
                 <span style={{ fontSize: 12, fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: isUnfav ? t.red : t.green }}>{fmtVar(d.variance)}</span>
                 {d.memos.length > 0 && (
-                  <button onClick={() => setMemosOpen(!memosOpen)} style={{ padding: "3px 9px", borderRadius: 4, border: `1px solid ${memosOpen ? t.accentBorder : t.divider}`, background: memosOpen ? t.accentDim : "transparent", color: memosOpen ? t.accent : t.textDim, fontSize: 10, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", transition: "all 0.1s" }}>
+                  <button onClick={() => setMemosOpen(!memosOpen)} style={{ padding: "3px 9px", borderRadius: 4, border: "1px solid " + (memosOpen ? t.accentBorder : t.divider), background: memosOpen ? t.accentDim : "transparent", color: memosOpen ? t.accent : t.textDim, fontSize: 10, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", transition: "all 0.1s" }}>
                     {memosOpen ? "Hide" : "Show"} {d.memos.length} memo{d.memos.length > 1 ? "s" : ""}
                   </button>
                 )}
               </div>
             </div>
           </div>
-          {/* Memos */}
           {memosOpen && d.memos.length > 0 && (
             <div style={{ padding: "0 14px 12px 14px", animation: "fadeIn 0.15s ease" }}>
-              <div style={{ background: "rgba(0,0,0,0.02)", borderRadius: 6, border: `1px solid ${t.divider}`, padding: "8px 12px" }}>
+              <div style={{ background: "rgba(0,0,0,0.02)", borderRadius: 6, border: "1px solid " + t.divider, padding: "8px 12px" }}>
                 {d.memos.map((m, j) => (
-                  <div key={j} style={{ fontSize: 11, lineHeight: 1.55, color: t.text, padding: "5px 0", borderBottom: j < d.memos.length - 1 ? `1px solid rgba(0,0,0,0.04)` : "none" }}>
-                    <span style={{ color: t.textMuted, fontFamily: "'JetBrains Mono', monospace", fontSize: 10, marginRight: 6 }}>→</span>
+                  <div key={j} style={{ fontSize: 11, lineHeight: 1.55, color: t.text, padding: "5px 0", borderBottom: j < d.memos.length - 1 ? "1px solid rgba(0,0,0,0.04)" : "none" }}>
+                    <span style={{ color: t.textMuted, fontFamily: "'JetBrains Mono', monospace", fontSize: 10, marginRight: 6 }}>{"\u2192"}</span>
                     {m}
                   </div>
                 ))}
@@ -466,7 +489,7 @@ export default function VarianceAnalysisTool() {
 
       // Step 2: Process data
       const marketFilter = market === "jp" ? "JP" : market === "nonjp" ? "Non-JP" : "All";
-      const { categories, drivers } = processCSVData(rows, marketFilter);
+      const { categories, drivers, currentMonth, priorMonth } = processCSVData(rows, marketFilter);
 
       setProgress(50);
       setProgressLabel("Generating drivers...");
@@ -497,6 +520,8 @@ export default function VarianceAnalysisTool() {
         analysisType,
         files: [...files],
         rowCount: rows.length,
+        currentMonth,
+        priorMonth,
       });
       setProgress(100);
     } catch (err) {
@@ -509,33 +534,45 @@ export default function VarianceAnalysisTool() {
 
   const marketLabel = market === "all" ? "Consolidated (All Markets)" : market === "nonjp" ? "Non-JP Markets" : "JP Market";
 
+  // ─── Helper to format month string ───
+  const formatMonth = (ym) => {
+    if (!ym) return "\u2014";
+    const parts = ym.split("-");
+    const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    return monthNames[parseInt(parts[1], 10) - 1] + " " + parts[0];
+  };
+
   // ─── Styles ───
-  const sCard = { background: t.card, border: `1px solid ${t.cardBorder}`, borderRadius: 10, boxShadow: "0 1px 3px rgba(0,0,0,0.06)" };
+  const sCard = { background: t.card, border: "1px solid " + t.cardBorder, borderRadius: 10, boxShadow: "0 1px 3px rgba(0,0,0,0.06)" };
   const sLabel = { fontSize: 11, fontWeight: 600, color: t.textDim, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 };
-  const sBtn = (active) => ({ padding: "8px 16px", borderRadius: 7, border: active ? `1px solid ${t.accentBorder}` : `1px solid ${t.cardBorder}`, background: active ? t.accentDim : "transparent", color: active ? t.accent : t.textDim, fontSize: 13, fontWeight: 500, cursor: "pointer", transition: "all 0.15s", fontFamily: "inherit" });
-  const sTh = { padding: "10px 14px", textAlign: "left", fontSize: 11, fontWeight: 600, color: t.textDim, textTransform: "uppercase", letterSpacing: "0.06em", borderBottom: `1px solid ${t.divider}`, background: t.headerBg };
-  const sTd = (i) => ({ padding: "10px 14px", fontSize: 13, color: t.text, borderBottom: `1px solid ${t.divider}`, background: i % 2 === 0 ? "transparent" : "rgba(0,0,0,0.015)" });
+  const sBtn = (active) => ({ padding: "8px 16px", borderRadius: 7, border: active ? "1px solid " + t.accentBorder : "1px solid " + t.cardBorder, background: active ? t.accentDim : "transparent", color: active ? t.accent : t.textDim, fontSize: 13, fontWeight: 500, cursor: "pointer", transition: "all 0.15s", fontFamily: "inherit" });
+  const sTh = { padding: "10px 14px", textAlign: "left", fontSize: 11, fontWeight: 600, color: t.textDim, textTransform: "uppercase", letterSpacing: "0.06em", borderBottom: "1px solid " + t.divider, background: t.headerBg };
+  const sTd = (i) => ({ padding: "10px 14px", fontSize: 13, color: t.text, borderBottom: "1px solid " + t.divider, background: i % 2 === 0 ? "transparent" : "rgba(0,0,0,0.015)" });
   const varColor = (v) => v >= 0 ? t.red : t.green;
   const varBg = (v) => v >= 0 ? t.redDim : t.greenDim;
   const resType = results ? analysisTypes[results.analysisType] : currentType;
 
+  // ─── Dynamic labels using actual month names from results ───
+  const priorLabel = results?.priorMonth ? formatMonth(results.priorMonth) : resType.priorLabel;
+  const currentLabel = results?.currentMonth ? formatMonth(results.currentMonth) : resType.currentLabel;
+
   return (
     <div style={{ minHeight: "100vh", background: t.bg, color: t.text, fontFamily: "'DM Sans', 'SF Pro Display', -apple-system, system-ui, sans-serif" }}>
       <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-      <style>{`@keyframes fadeIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }`}</style>
+      <style>{"@keyframes fadeIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }"}</style>
 
-      {/* ═══ Header ═══ */}
-      <div style={{ padding: "16px 32px", borderBottom: `1px solid ${t.divider}`, display: "flex", alignItems: "center", justifyContent: "space-between", background: "rgba(255,255,255,0.95)", backdropFilter: "blur(12px)" }}>
+      {/* Header */}
+      <div style={{ padding: "16px 32px", borderBottom: "1px solid " + t.divider, display: "flex", alignItems: "center", justifyContent: "space-between", background: "rgba(255,255,255,0.95)", backdropFilter: "blur(12px)" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
           <div style={{ width: 32, height: 32, borderRadius: 8, background: "linear-gradient(135deg, #0176D3, #032D60)", display: "flex", alignItems: "center", justifyContent: "center" }}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round"><path d="M3 3v18h18"/><path d="M7 16l4-8 4 4 5-9"/></svg>
           </div>
           <div>
             <div style={{ fontSize: 15, fontWeight: 700, color: t.white, letterSpacing: "-0.01em" }}>Variance Analysis Tool</div>
-            <div style={{ fontSize: 11, color: t.textDim, marginTop: 1 }}>300x faster than manual analysis · Python for variance calculations, AI for commentary</div>
+            <div style={{ fontSize: 11, color: t.textDim, marginTop: 1 }}>300x faster than manual analysis &middot; Python for variance calculations, AI for commentary</div>
           </div>
         </div>
-        <a href="https://github.com/dhakshanayashwanth/variance-analysis-tool/tree/main" target="_blank" rel="noopener noreferrer" style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 500, color: t.textDim, textDecoration: "none", padding: "7px 14px", borderRadius: 7, border: `1px solid ${t.cardBorder}`, background: "transparent", transition: "all 0.15s" }}
+        <a href="https://github.com/dhakshanayashwanth/variance-analysis-tool/tree/main" target="_blank" rel="noopener noreferrer" style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 500, color: t.textDim, textDecoration: "none", padding: "7px 14px", borderRadius: 7, border: "1px solid " + t.cardBorder, background: "transparent", transition: "all 0.15s" }}
           onMouseEnter={(e) => { e.currentTarget.style.borderColor = t.accentBorder; e.currentTarget.style.color = t.white; }}
           onMouseLeave={(e) => { e.currentTarget.style.borderColor = t.cardBorder; e.currentTarget.style.color = t.textDim; }}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
@@ -544,13 +581,13 @@ export default function VarianceAnalysisTool() {
       </div>
 
       <div style={{ maxWidth: 1200, margin: "0 auto", padding: "28px 24px" }}>
-        {/* ═══ Analysis Type Selector ═══ */}
+        {/* Analysis Type Selector */}
         {!results && (
           <div style={{ marginBottom: 20, position: "relative" }} ref={dropdownRef}>
             <div style={sLabel}>Analysis Type</div>
-            <button onClick={() => setTypeDropdownOpen(!typeDropdownOpen)} style={{ width: "100%", padding: "14px 20px", borderRadius: 10, border: `1px solid ${typeDropdownOpen ? t.accentBorder : t.cardBorder}`, background: t.card, color: t.white, fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "space-between", transition: "border-color 0.15s" }}>
+            <button onClick={() => setTypeDropdownOpen(!typeDropdownOpen)} style={{ width: "100%", padding: "14px 20px", borderRadius: 10, border: "1px solid " + (typeDropdownOpen ? t.accentBorder : t.cardBorder), background: t.card, color: t.white, fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "space-between", transition: "border-color 0.15s" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                <div style={{ width: 28, height: 28, borderRadius: 6, background: analysisType === "accounting" ? t.amberDim : t.accentDim, border: `1px solid ${analysisType === "accounting" ? t.amberBorder : t.accentBorder}`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <div style={{ width: 28, height: 28, borderRadius: 6, background: analysisType === "accounting" ? t.amberDim : t.accentDim, border: "1px solid " + (analysisType === "accounting" ? t.amberBorder : t.accentBorder), display: "flex", alignItems: "center", justifyContent: "center" }}>
                   {analysisType === "accounting" ? <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={t.amber} strokeWidth="2" strokeLinecap="round"><path d="M4 2v20l2-1 2 1 2-1 2 1 2-1 2 1 2-1 2 1V2l-2 1-2-1-2 1-2-1-2 1-2-1-2 1-2-1z"/><path d="M8 10h8"/><path d="M8 14h4"/></svg> : <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={t.accent} strokeWidth="2" strokeLinecap="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>}
                 </div>
                 <div style={{ textAlign: "left" }}>
@@ -561,11 +598,11 @@ export default function VarianceAnalysisTool() {
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={t.textDim} strokeWidth="2.5" strokeLinecap="round" style={{ transition: "transform 0.2s", transform: typeDropdownOpen ? "rotate(180deg)" : "rotate(0deg)", flexShrink: 0 }}><polyline points="6 9 12 15 18 9" /></svg>
             </button>
             {typeDropdownOpen && (
-              <div style={{ position: "absolute", top: "100%", left: 0, right: 0, zIndex: 50, marginTop: 6, borderRadius: 10, border: `1px solid ${t.accentBorder}`, background: t.card, boxShadow: "0 8px 32px rgba(0,0,0,0.12)", animation: "fadeIn 0.15s ease", overflow: "hidden" }}>
+              <div style={{ position: "absolute", top: "100%", left: 0, right: 0, zIndex: 50, marginTop: 6, borderRadius: 10, border: "1px solid " + t.accentBorder, background: t.card, boxShadow: "0 8px 32px rgba(0,0,0,0.12)", animation: "fadeIn 0.15s ease", overflow: "hidden" }}>
                 {Object.entries(analysisTypes).map(([key, val]) => (
-                  <button key={key} onClick={() => { setAnalysisType(key); setTypeDropdownOpen(false); setFiles([]); }} style={{ width: "100%", padding: "14px 20px", background: analysisType === key ? "rgba(1,118,211,0.06)" : "transparent", border: "none", borderBottom: `1px solid ${t.divider}`, cursor: "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", gap: 12, transition: "background 0.1s" }}
+                  <button key={key} onClick={() => { setAnalysisType(key); setTypeDropdownOpen(false); setFiles([]); }} style={{ width: "100%", padding: "14px 20px", background: analysisType === key ? "rgba(1,118,211,0.06)" : "transparent", border: "none", borderBottom: "1px solid " + t.divider, cursor: "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", gap: 12, transition: "background 0.1s" }}
                     onMouseEnter={(e) => e.currentTarget.style.background = "rgba(1,118,211,0.08)"} onMouseLeave={(e) => e.currentTarget.style.background = analysisType === key ? "rgba(1,118,211,0.06)" : "transparent"}>
-                    <div style={{ width: 28, height: 28, borderRadius: 6, background: key === "accounting" ? t.amberDim : t.accentDim, border: `1px solid ${key === "accounting" ? t.amberBorder : t.accentBorder}`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                    <div style={{ width: 28, height: 28, borderRadius: 6, background: key === "accounting" ? t.amberDim : t.accentDim, border: "1px solid " + (key === "accounting" ? t.amberBorder : t.accentBorder), display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                       {key === "accounting" ? <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={t.amber} strokeWidth="2" strokeLinecap="round"><path d="M4 2v20l2-1 2 1 2-1 2 1 2-1 2 1 2-1 2 1V2l-2 1-2-1-2 1-2-1-2 1-2-1-2 1-2-1z"/><path d="M8 10h8"/><path d="M8 14h4"/></svg> : <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={t.accent} strokeWidth="2" strokeLinecap="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>}
                     </div>
                     <div style={{ textAlign: "left" }}>
@@ -580,7 +617,7 @@ export default function VarianceAnalysisTool() {
           </div>
         )}
 
-        {/* ═══ Upload + Config ═══ */}
+        {/* Upload + Config */}
         {!results && (
           <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
             {/* Drop Zone */}
@@ -591,15 +628,15 @@ export default function VarianceAnalysisTool() {
                 <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <div style={{ width: 28, height: 28, borderRadius: 6, background: t.greenDim, border: `1px solid ${t.greenBorder}`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                      <div style={{ width: 28, height: 28, borderRadius: 6, background: t.greenDim, border: "1px solid " + t.greenBorder, display: "flex", alignItems: "center", justifyContent: "center" }}>
                         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={t.green} strokeWidth="2.5" strokeLinecap="round"><path d="M20 6L9 17l-5-5"/></svg>
                       </div>
                       <span style={{ fontSize: 13, fontWeight: 600, color: t.white }}>{files.length} {files.length === 1 ? "file" : "files"} selected</span>
                     </div>
-                    {canAddMore && <button onClick={(e) => { e.stopPropagation(); fileRef.current?.click(); }} style={{ padding: "5px 12px", borderRadius: 6, fontSize: 11, fontWeight: 600, background: t.accentDim, border: `1px solid ${t.accentBorder}`, color: t.accent, cursor: "pointer", fontFamily: "inherit" }}>+ Add File</button>}
+                    {canAddMore && <button onClick={(e) => { e.stopPropagation(); fileRef.current?.click(); }} style={{ padding: "5px 12px", borderRadius: 6, fontSize: 11, fontWeight: 600, background: t.accentDim, border: "1px solid " + t.accentBorder, color: t.accent, cursor: "pointer", fontFamily: "inherit" }}>+ Add File</button>}
                   </div>
                   {files.map((f, i) => (
-                    <div key={i} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 14px", borderRadius: 7, background: "rgba(0,0,0,0.02)", border: `1px solid ${t.divider}` }}>
+                    <div key={i} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 14px", borderRadius: 7, background: "rgba(0,0,0,0.02)", border: "1px solid " + t.divider }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={t.textDim} strokeWidth="2" strokeLinecap="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
                         <div style={{ textAlign: "left" }}>
@@ -607,17 +644,17 @@ export default function VarianceAnalysisTool() {
                           <div style={{ fontSize: 10, color: t.textDim, marginTop: 1 }}>{(f.size / 1024).toFixed(1)} KB</div>
                         </div>
                       </div>
-                      <button onClick={(e) => { e.stopPropagation(); removeFile(i); }} style={{ background: "transparent", border: "none", color: t.textDim, cursor: "pointer", fontSize: 16, fontFamily: "inherit", padding: "2px 6px", borderRadius: 4 }} onMouseEnter={(e) => e.currentTarget.style.color = t.red} onMouseLeave={(e) => e.currentTarget.style.color = t.textDim}>×</button>
+                      <button onClick={(e) => { e.stopPropagation(); removeFile(i); }} style={{ background: "transparent", border: "none", color: t.textDim, cursor: "pointer", fontSize: 16, fontFamily: "inherit", padding: "2px 6px", borderRadius: 4 }} onMouseEnter={(e) => e.currentTarget.style.color = t.red} onMouseLeave={(e) => e.currentTarget.style.color = t.textDim}>{"\u00D7"}</button>
                     </div>
                   ))}
                 </div>
               ) : (
                 <>
-                  <div style={{ width: 52, height: 52, borderRadius: 12, background: t.accentDim, border: `1px solid ${t.accentBorder}`, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 14px" }}>
+                  <div style={{ width: 52, height: 52, borderRadius: 12, background: t.accentDim, border: "1px solid " + t.accentBorder, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 14px" }}>
                     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={t.accent} strokeWidth="2" strokeLinecap="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
                   </div>
                   <div style={{ fontSize: 14, fontWeight: 600, color: t.white, marginBottom: 4 }}>Drop your spend data file here</div>
-                  <div style={{ fontSize: 12, color: t.textDim }}>or click to browse · CSV or XLSX</div>
+                  <div style={{ fontSize: 12, color: t.textDim }}>or click to browse &middot; CSV or XLSX</div>
                 </>
               )}
             </div>
@@ -661,13 +698,13 @@ export default function VarianceAnalysisTool() {
               <InfoDropdown title="How Variances Are Calculated" color={t.accent} borderColor={t.accentBorder} bgColor={t.accentDim}
                 icon={<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={t.accent} strokeWidth="2" strokeLinecap="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>}>
                 <div style={{ marginTop: 4 }}>
-                  <div style={{ padding: "12px 16px", borderRadius: 8, background: "rgba(0,0,0,0.03)", border: `1px solid ${t.divider}`, fontFamily: "'JetBrains Mono', monospace", fontSize: 14, fontWeight: 500, color: t.accent, marginBottom: 14 }}>{currentType.formula}</div>
+                  <div style={{ padding: "12px 16px", borderRadius: 8, background: "rgba(0,0,0,0.03)", border: "1px solid " + t.divider, fontFamily: "'JetBrains Mono', monospace", fontSize: 14, fontWeight: 500, color: t.accent, marginBottom: 14 }}>{currentType.formula}</div>
                   <p style={{ fontSize: 13, lineHeight: 1.65, color: t.text, margin: "0 0 14px 0" }}>{currentType.interpretation}</p>
                   <div style={{ fontSize: 11, fontWeight: 600, color: t.textDim, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10 }}>Methodology</div>
                   <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                     {currentType.methodology.map((step, i) => (
                       <div key={i} style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
-                        <div style={{ width: 20, height: 20, borderRadius: 5, flexShrink: 0, marginTop: 1, background: "rgba(1,118,211,0.12)", border: `1px solid ${t.accentBorder}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 700, color: t.accent, fontFamily: "'JetBrains Mono', monospace" }}>{i + 1}</div>
+                        <div style={{ width: 20, height: 20, borderRadius: 5, flexShrink: 0, marginTop: 1, background: "rgba(1,118,211,0.12)", border: "1px solid " + t.accentBorder, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 700, color: t.accent, fontFamily: "'JetBrains Mono', monospace" }}>{i + 1}</div>
                         <span style={{ fontSize: 12, lineHeight: 1.6, color: t.text }}>{step}</span>
                       </div>
                     ))}
@@ -679,9 +716,9 @@ export default function VarianceAnalysisTool() {
                 icon={<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={t.cyan} strokeWidth="2" strokeLinecap="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>}>
                 <div style={{ marginTop: 4 }}>
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 0, padding: "14px 0", flexWrap: "wrap" }}>
-                    {[{ label: "Your Data", icon: "📄", sub: "CSV / XLSX" }, null, { label: "Python Engine", icon: "🐍", sub: "Variance Calc" }, null, { label: "PII Proxy", icon: "🛡️", sub: "Scrubs Sensitive Data" }, null, { label: "LLM", icon: "🤖", sub: "Commentary Only" }].map((item, i) =>
+                    {[{ label: "Your Data", icon: "\uD83D\uDCC4", sub: "CSV / XLSX" }, null, { label: "Python Engine", icon: "\uD83D\uDC0D", sub: "Variance Calc" }, null, { label: "PII Proxy", icon: "\uD83D\uDEE1\uFE0F", sub: "Scrubs Sensitive Data" }, null, { label: "LLM", icon: "\uD83E\uDD16", sub: "Commentary Only" }].map((item, i) =>
                       item === null ? <svg key={i} width="28" height="12" viewBox="0 0 28 12" style={{ flexShrink: 0 }}><line x1="2" y1="6" x2="22" y2="6" stroke={t.textDim} strokeWidth="1.5" /><polyline points="18,2 24,6 18,10" fill="none" stroke={t.textDim} strokeWidth="1.5" /></svg>
-                        : <div key={i} style={{ padding: "10px 14px", borderRadius: 8, textAlign: "center", minWidth: 90, background: item.label === "PII Proxy" ? t.cyanDim : "rgba(0,0,0,0.025)", border: `1px solid ${item.label === "PII Proxy" ? t.cyanBorder : t.divider}` }}>
+                        : <div key={i} style={{ padding: "10px 14px", borderRadius: 8, textAlign: "center", minWidth: 90, background: item.label === "PII Proxy" ? t.cyanDim : "rgba(0,0,0,0.025)", border: "1px solid " + (item.label === "PII Proxy" ? t.cyanBorder : t.divider) }}>
                           <div style={{ fontSize: 18, marginBottom: 4 }}>{item.icon}</div>
                           <div style={{ fontSize: 11, fontWeight: 600, color: t.white }}>{item.label}</div>
                           <div style={{ fontSize: 9, color: t.textDim, marginTop: 2 }}>{item.sub}</div>
@@ -694,7 +731,7 @@ export default function VarianceAnalysisTool() {
 
             {/* Run Button */}
             <button onClick={runAnalysis} disabled={!hasFiles || analyzing} style={{ width: "100%", padding: "14px", borderRadius: 10, border: "none", background: hasFiles && !analyzing ? "linear-gradient(135deg, #0176D3, #032D60)" : t.cardBorder, color: hasFiles && !analyzing ? "#fff" : t.textMuted, fontSize: 14, fontWeight: 700, cursor: hasFiles && !analyzing ? "pointer" : "not-allowed", fontFamily: "inherit", letterSpacing: "0.02em", transition: "all 0.2s", boxShadow: hasFiles && !analyzing ? "0 4px 24px rgba(1,118,211,0.18)" : "none" }}>
-              {analyzing ? "Analyzing..." : `Run ${currentType.label}`}
+              {analyzing ? "Analyzing..." : "Run " + currentType.label}
             </button>
 
             {/* Progress */}
@@ -705,14 +742,14 @@ export default function VarianceAnalysisTool() {
                   <span style={{ fontSize: 12, fontWeight: 600, color: t.accent, fontFamily: "'JetBrains Mono', monospace" }}>{progress}%</span>
                 </div>
                 <div style={{ height: 4, borderRadius: 2, background: t.cardBorder }}>
-                  <div style={{ height: "100%", borderRadius: 2, background: "linear-gradient(90deg, #0176D3, #032D60)", width: `${progress}%`, transition: "width 0.3s ease" }} />
+                  <div style={{ height: "100%", borderRadius: 2, background: "linear-gradient(90deg, #0176D3, #032D60)", width: progress + "%", transition: "width 0.3s ease" }} />
                 </div>
               </div>
             )}
           </div>
         )}
 
-        {/* ═══ RESULTS ═══ */}
+        {/* RESULTS */}
         {results && (
           <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
             {/* Results Header */}
@@ -720,11 +757,11 @@ export default function VarianceAnalysisTool() {
               <div>
                 <div style={{ fontSize: 20, fontWeight: 700, color: t.white, letterSpacing: "-0.02em" }}>Analysis Results</div>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 5 }}>
-                  <span style={{ fontSize: 10, padding: "3px 9px", borderRadius: 5, fontWeight: 600, background: t.accentDim, color: t.accent, border: `1px solid ${t.accentBorder}`, textTransform: "uppercase", letterSpacing: "0.04em" }}>{resType.label}</span>
-                  <span style={{ fontSize: 12, color: t.textDim }}>{marketLabel} · {results.rowCount?.toLocaleString()} rows · {new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</span>
+                  <span style={{ fontSize: 10, padding: "3px 9px", borderRadius: 5, fontWeight: 600, background: t.accentDim, color: t.accent, border: "1px solid " + t.accentBorder, textTransform: "uppercase", letterSpacing: "0.04em" }}>{resType.label}</span>
+                  <span style={{ fontSize: 12, color: t.textDim }}>{marketLabel} &middot; {results.rowCount?.toLocaleString()} rows &middot; {formatMonth(results.priorMonth)} vs {formatMonth(results.currentMonth)}</span>
                 </div>
               </div>
-              <button onClick={() => { setResults(null); setFiles([]); }} style={{ padding: "8px 18px", borderRadius: 7, border: `1px solid ${t.cardBorder}`, background: "transparent", color: t.text, fontSize: 12, fontWeight: 500, cursor: "pointer", fontFamily: "inherit" }}>← New Analysis</button>
+              <button onClick={() => { setResults(null); setFiles([]); }} style={{ padding: "8px 18px", borderRadius: 7, border: "1px solid " + t.cardBorder, background: "transparent", color: t.text, fontSize: 12, fontWeight: 500, cursor: "pointer", fontFamily: "inherit" }}>{"\u2190"} New Analysis</button>
             </div>
 
             {/* KPIs */}
@@ -736,8 +773,8 @@ export default function VarianceAnalysisTool() {
               return (
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 14 }}>
                   {[
-                    { label: resType.priorLabel, value: fmt(totPrior), sub: "Total Spend", color: t.textDim },
-                    { label: resType.currentLabel, value: fmt(totCurrent), sub: "Total Spend", color: t.accent },
+                    { label: priorLabel, value: fmt(totPrior), sub: "Total Spend", color: t.textDim },
+                    { label: currentLabel, value: fmt(totCurrent), sub: "Total Spend", color: t.accent },
                     { label: "Total Variance", value: fmtVar(totVar), sub: fmtPct(totPct), color: totVar >= 0 ? t.red : t.green },
                   ].map((kpi, i) => (
                     <div key={i} style={{ ...sCard, padding: "18px 20px" }}>
@@ -752,14 +789,14 @@ export default function VarianceAnalysisTool() {
 
             {/* Variance by Spend Category */}
             <div style={{ ...sCard, overflow: "hidden" }}>
-              <div style={{ padding: "16px 20px", borderBottom: `1px solid ${t.divider}`, display: "flex", alignItems: "center", gap: 8 }}>
+              <div style={{ padding: "16px 20px", borderBottom: "1px solid " + t.divider, display: "flex", alignItems: "center", gap: 8 }}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={t.purple} strokeWidth="2" strokeLinecap="round"><path d="M12 20V10"/><path d="M18 20V4"/><path d="M6 20v-4"/></svg>
                 <span style={{ fontSize: 14, fontWeight: 700, color: t.white }}>Variance by Spend Category</span>
               </div>
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
                 <thead>
                   <tr>
-                    {["Spend Category", resType.priorLabel, resType.currentLabel, "Variance ($)", "Variance (%)"].map((h) => (
+                    {["Spend Category", priorLabel, currentLabel, "Variance ($)", "Variance (%)"].map((h) => (
                       <th key={h} style={{ ...sTh, textAlign: h === "Spend Category" ? "left" : "right" }}>{h}</th>
                     ))}
                   </tr>
@@ -782,12 +819,12 @@ export default function VarianceAnalysisTool() {
 
             {/* Variance Drivers */}
             <div style={{ ...sCard, overflow: "hidden" }}>
-              <div style={{ padding: "16px 20px", borderBottom: `1px solid ${t.divider}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div style={{ padding: "16px 20px", borderBottom: "1px solid " + t.divider, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={t.amber} strokeWidth="2" strokeLinecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
                   <span style={{ fontSize: 14, fontWeight: 700, color: t.white }}>Variance Drivers</span>
                 </div>
-                <span style={{ fontSize: 11, color: t.textDim }}>Grouped by Cost Center & Supplier · Sorted by |Variance| desc</span>
+                <span style={{ fontSize: 11, color: t.textDim }}>Grouped by Cost Center & Supplier &middot; Sorted by |Variance| desc</span>
               </div>
               <div>
                 {(() => {
@@ -812,17 +849,17 @@ export default function VarianceAnalysisTool() {
             {/* Commentary */}
             {results.commentary && results.commentary.length > 0 && (
               <div style={{ ...sCard, overflow: "hidden" }}>
-                <div style={{ padding: "16px 20px", borderBottom: `1px solid ${t.divider}`, display: "flex", alignItems: "center", gap: 8 }}>
+                <div style={{ padding: "16px 20px", borderBottom: "1px solid " + t.divider, display: "flex", alignItems: "center", gap: 8 }}>
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={t.green} strokeWidth="2" strokeLinecap="round"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
                   <span style={{ fontSize: 14, fontWeight: 700, color: t.white }}>Variance Commentary</span>
-                  <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 10, background: results.commentaryType === "ai" ? t.purpleDim : t.accentDim, border: `1px solid ${results.commentaryType === "ai" ? "rgba(123,97,255,0.22)" : t.accentBorder}`, color: results.commentaryType === "ai" ? t.purple : t.accent, fontWeight: 600 }}>
+                  <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 10, background: results.commentaryType === "ai" ? t.purpleDim : t.accentDim, border: "1px solid " + (results.commentaryType === "ai" ? "rgba(123,97,255,0.22)" : t.accentBorder), color: results.commentaryType === "ai" ? t.purple : t.accent, fontWeight: 600 }}>
                     {results.commentaryType === "ai" ? "AI-Enhanced" : "Python Generated"}
                   </span>
                   {results.commentaryType === "ai" && <span style={{ fontSize: 10, color: t.textDim, fontStyle: "italic" }}>Claude Sonnet 4.5</span>}
                 </div>
                 <div style={{ padding: "8px 0" }}>
                   {results.commentary.map((c, i) => (
-                    <div key={i} style={{ padding: "16px 20px", borderBottom: i < results.commentary.length - 1 ? `1px solid ${t.divider}` : "none" }}>
+                    <div key={i} style={{ padding: "16px 20px", borderBottom: i < results.commentary.length - 1 ? "1px solid " + t.divider : "none" }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
                         <div style={{ width: 8, height: 8, borderRadius: "50%", background: t.accent }} />
                         <span style={{ fontSize: 13, fontWeight: 700, color: t.white }}>{c.title}</span>
@@ -842,8 +879,8 @@ export default function VarianceAnalysisTool() {
 
             {/* Footer */}
             <div style={{ textAlign: "center", padding: "8px 0 16px" }}>
-              <div style={{ fontSize: 11, color: t.textMuted, marginBottom: 8 }}>Generated {new Date().toLocaleString()} · {resType.label} · {marketLabel}</div>
-              <a href="https://github.com/dhakshanayashwanth/variance-analysis-tool/tree/main" target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 500, color: t.textDim, textDecoration: "none", padding: "5px 12px", borderRadius: 6, border: `1px solid ${t.divider}`, background: "rgba(0,0,0,0.02)", transition: "all 0.15s" }}
+              <div style={{ fontSize: 11, color: t.textMuted, marginBottom: 8 }}>Generated {new Date().toLocaleString()} &middot; {resType.label} &middot; {marketLabel}</div>
+              <a href="https://github.com/dhakshanayashwanth/variance-analysis-tool/tree/main" target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 500, color: t.textDim, textDecoration: "none", padding: "5px 12px", borderRadius: 6, border: "1px solid " + t.divider, background: "rgba(0,0,0,0.02)", transition: "all 0.15s" }}
                 onMouseEnter={(e) => { e.currentTarget.style.borderColor = t.accentBorder; e.currentTarget.style.color = t.accent; }} onMouseLeave={(e) => { e.currentTarget.style.borderColor = t.divider; e.currentTarget.style.color = t.textDim; }}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
                 View on GitHub
