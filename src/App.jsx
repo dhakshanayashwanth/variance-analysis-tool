@@ -450,7 +450,7 @@ function AuditDropdown({ audit }) {
 
 // ─── Main Component ───
 export default function VarianceAnalysisTool() {
-  const [analysisType, setAnalysisType] = useState("finance");
+  const [analysisType, setAnalysisType] = useState("accounting");
   const [typeDropdownOpen, setTypeDropdownOpen] = useState(false);
   const [files, setFiles] = useState([]);
   const [dragging, setDragging] = useState(false);
