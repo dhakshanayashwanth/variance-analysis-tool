@@ -208,7 +208,15 @@ async function enhanceWithAI(commentary, drivers) {
   for (let i = 0; i < enhanced.length; i++) {
     const item = enhanced[i];
     const { memos, audit } = getTopDriverWithAudit(drivers, item.categoryName);
-    if (memos.length === 0) continue;
+    if (memos.length === 0) {
+      enhanced[i] = {
+        ...enhanced[i],
+        aiEnhancement: "AI commentary unavailable for this category — no line memos found in the source data for the top variance driver. Please verify memo fields are populated and try again.",
+        type: "Python + AI Generated",
+        audit,
+      };
+      continue;
+    }
 
     const memoText = memos.map((m, idx) => (idx + 1) + ". " + m).join("\n");
 
@@ -232,9 +240,22 @@ async function enhanceWithAI(commentary, drivers) {
       const aiText = data.content?.map((c) => c.text || "").join("") || "";
       if (aiText) {
         enhanced[i] = { ...enhanced[i], aiEnhancement: aiText.trim(), type: "Python + AI Generated", audit };
+      } else {
+        enhanced[i] = {
+          ...enhanced[i],
+          aiEnhancement: "AI commentary temporarily unavailable — the model returned an empty response. Please try again shortly.",
+          type: "Python + AI Generated",
+          audit,
+        };
       }
     } catch (err) {
       console.error("AI enhancement failed for", item.categoryName, err);
+      enhanced[i] = {
+        ...enhanced[i],
+        aiEnhancement: "AI commentary temporarily unavailable — this is a known intermittent issue with the LLM provider. Please try again in a few minutes.",
+        type: "Python + AI Generated",
+        audit,
+      };
     }
   }
 
